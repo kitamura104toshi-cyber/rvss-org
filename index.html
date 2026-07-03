@@ -1,0 +1,1595 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RVSS 組織管理</title>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<style>
+  :root {
+    --bg: #f7f6f2;
+    --card: #ffffff;
+    --border: #e5e3dc;
+    --text: #2a2a2a;
+    --muted: #6b6b6b;
+    --accent: #4f63d2;
+    --accent-soft: #e8ecff;
+    --pink: #fde9ec;
+    --pink-text: #b73a4a;
+    --green: #e6f4ea;
+    --green-text: #2f7d4a;
+    --orange: #fff1de;
+    --orange-text: #a8631b;
+    --blue: #e8ecff;
+    --blue-text: #4f63d2;
+    --purple: #efe6f7;
+    --purple-text: #6a3e9a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 22px; margin: 0 0 16px; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .stat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .stat .num { font-size: 26px; font-weight: 700; }
+  .stat .lbl { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .tab {
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 8px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .tab.active { background: var(--text); color: white; border-color: var(--text); }
+
+  .grid {
+    column-count: 2;
+    column-gap: 16px;
+  }
+  .grid > .card {
+    break-inside: avoid;
+    -webkit-column-break-inside: avoid;
+    page-break-inside: avoid;
+    margin-bottom: 16px;
+    display: inline-block;
+    width: 100%;
+  }
+  @media (max-width: 560px) {
+    .grid { column-count: 1; }
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .card-title { font-weight: 700; font-size: 16px; }
+  .count-pill {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: 999px;
+  }
+  .section-label { font-size: 12px; color: var(--muted); margin: 10px 0 6px; }
+
+  .slot {
+    background: #faf9f5;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .slot .name { font-size: 14px; font-weight: 600; }
+  .slot .role { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .slot.empty {
+    background: #fff;
+    border-style: dashed;
+    color: var(--muted);
+    cursor: pointer;
+    justify-content: center;
+    font-size: 13px;
+  }
+  .slot.empty:hover { background: #f0eee7; }
+
+  .tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .tag.pj { background: var(--blue); color: var(--blue-text); }
+  .tag.role-統括 { background: var(--purple); color: var(--purple-text); }
+  .tag.role-副統括 { background: var(--blue); color: var(--blue-text); }
+  .tag.role-TL { background: var(--green); color: var(--green-text); }
+  .tag.role-メンバー { background: #f0eee7; color: var(--muted); }
+  .tag.editable { cursor: pointer; }
+  .tag.editable:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+  /* ===== 閲覧モード ===== */
+  body.view-mode .editor-only { display: none !important; }
+  body.view-mode .tag.editable { cursor: default; pointer-events: none; }
+  body.view-mode .tag.editable:hover { outline: none; }
+  body.view-mode .name[onclick],
+  body.view-mode .card-title[onclick],
+  body.view-mode .group-title[onclick],
+  body.view-mode .subgroup-title[onclick] { cursor: default !important; pointer-events: none; }
+  .mode-badge {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-left: 6px;
+    font-weight: 600;
+  }
+  .mode-badge.view { background: #e8ecff; color: var(--blue-text); }
+  .mode-badge.edit { background: #fff1de; color: var(--orange-text); }
+
+  .icon-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 16px;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .icon-btn:hover { background: #f0eee7; color: var(--pink-text); }
+
+  .btn {
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn:hover { background: #f0eee7; }
+  .btn.primary { background: var(--text); color: white; border-color: var(--text); }
+  .btn-add {
+    width: 100%;
+    margin-top: 8px;
+    background: #fff;
+    border: 1px dashed var(--border);
+    padding: 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .btn-add:hover { background: #f0eee7; }
+
+  .group-box {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-top: 12px;
+    background: #fcfbf6;
+  }
+  .group-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .group-title { font-weight: 700; font-size: 14px; color: var(--text); }
+  .subgroup-box {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-top: 8px;
+    background: #fff;
+  }
+  .subgroup-title { font-weight: 600; font-size: 13px; color: var(--muted); }
+
+  .dept-card { border-top: 4px solid var(--accent); }
+  .dept-card.代表補佐室 { border-top-color: #6a3e9a; }
+  .dept-card.人事 { border-top-color: #2f7d4a; }
+  .dept-card.広報 { border-top-color: #b73a4a; }
+  .dept-card.総務情シス { border-top-color: #a8631b; }
+  .dept-card.エリア { border-top-color: #4f63d2; }
+  .dept-card.スクール { border-top-color: #6a3e9a; }
+
+  /* modal */
+  .modal-bg {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+    display: none; align-items: center; justify-content: center; z-index: 100;
+  }
+  .modal-bg.open { display: flex; }
+  .modal {
+    background: white; border-radius: 12px; padding: 20px;
+    width: 90%; max-width: 420px; max-height: 80vh; overflow: auto;
+  }
+  .modal h3 { margin: 0 0 12px; font-size: 16px; }
+  .modal input, .modal select {
+    width: 100%; padding: 10px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 14px; margin-bottom: 10px;
+    font-family: inherit;
+  }
+  .modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  .member-pick {
+    padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 14px;
+    border: 1px solid transparent;
+  }
+  .member-pick:hover { background: var(--accent-soft); }
+
+  .unassigned-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    background: var(--pink); color: var(--pink-text);
+    padding: 6px 12px; border-radius: 999px; font-size: 13px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .chip.onbo { background: var(--orange); color: var(--orange-text); }
+  .warn {
+    font-size: 12px; color: var(--pink-text); margin-top: 8px;
+  }
+  .toolbar {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px;
+  }
+  .search {
+    padding: 8px 12px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 14px; min-width: 200px;
+    font-family: inherit;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RVSS 組織管理 <span id="sync-status" style="font-size:12px;color:var(--muted);font-weight:400;margin-left:8px">⏳ 接続中…</span></h1>
+
+  <div class="stats" id="stats"></div>
+  <div class="tabs" id="tabs"></div>
+  <div class="toolbar">
+    <div id="toolbar-left"></div>
+    <div>
+      <button class="btn" onclick="exportJSON()">JSONエクスポート</button>
+      <button class="btn editor-only" onclick="resetData()">初期化</button>
+    </div>
+  </div>
+  <div id="content"></div>
+</div>
+
+<div class="modal-bg" id="modal-bg" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal"></div>
+</div>
+
+<script>
+// ====== 初期データ（Excel「RVSS組織データ_2026-06-02.xlsx」に完全準拠） ======
+const INITIAL = {
+  // Excel「氏名」列に登場するユニークな人物
+  members: [
+    "佐々木晴也","西原浩貴","八重樫陸","山口諒真","小笹竣大","エブラヒミ謙",
+    "北村俊輝","永藤健吾","芹澤大義","平井開陸","平林紗良","守屋大地",
+    "小林桜輔","石毛琳太郎","葛尾優樹","小屋賢太朗","後藤隼星","久次米謙",
+    "小川空汰","森心美","鈴木琢仁","吉末憲生","西山碧","溝川楽","中森美幸",
+    "小田野竜士","中桐唯那","平良祐吾","井上貴雅","内崎健太","尾関一馬",
+    "松本歩太","萬年歩乃伽","平山泰我","田端心温","浦田航志"
+  ],
+  // プロジェクト（ID 50配下）
+  projects: [
+    { name: "NoBorder",       mentors: [], students: ["田端心温","溝川楽"], capacity: 2 },
+    { name: "かにお",         mentors: [], students: ["浦田航志","鈴木琢仁"], capacity: 2 },
+    { name: "AI+",            mentors: [], students: ["永藤健吾","尾関一馬"], capacity: 2 },
+    { name: "クリエイターズ", mentors: [], students: ["平林紗良","守屋大地","吉末憲生","小田野竜士"], capacity: 2 },
+  ],
+  // コミュニティ運営（ID 4 代表補佐室 / 10 組織運営統括配下）
+  // 各部署は lead（統括・副統括・秘書など）と groups（採用・育成など）で構成
+  departments: [
+    { name: "代表補佐室", color: "代表補佐室",
+      lead: [
+        { name: "八重樫陸", role: "統括" },
+        { name: "山口諒真", role: "副統括" },
+      ],
+      groups: []
+    },
+    { name: "人事", color: "人事",
+      lead: [
+        { name: "小笹竣大", role: "統括" },
+        { name: "山口諒真", role: "副統括" },
+      ],
+      groups: [
+        { name: "採用", members: [
+          { name: "芹澤大義", role: "TL" },
+          { name: "平井開陸", role: "" },
+          { name: "平林紗良", role: "" },
+          { name: "守屋大地", role: "" },
+          { name: "小林桜輔", role: "" },
+          { name: "八重樫陸", role: "" },
+        ]},
+        { name: "育成", members: [
+          { name: "エブラヒミ謙", role: "TL" },
+          { name: "北村俊輝", role: "" },
+          { name: "永藤健吾", role: "" },
+        ]},
+        { name: "評価", members: [
+          { name: "山口諒真", role: "TL" },
+        ]},
+        { name: "企画", members: [
+          { name: "石毛琳太郎", role: "TL(関東)" },
+          { name: "葛尾優樹", role: "TL(関西)" },
+          { name: "小林桜輔", role: "" },
+          { name: "小屋賢太朗", role: "" },
+          { name: "後藤隼星", role: "" },
+        ]},
+      ]
+    },
+    { name: "広報", color: "広報",
+      lead: [
+        { name: "久次米謙", role: "統括" },
+        { name: "小川空汰", role: "副統括" },
+        { name: "森心美", role: "秘書" },
+      ],
+      groups: [
+        { name: "戦略", members: [
+          { name: "鈴木琢仁", role: "TL" },
+          { name: "吉末憲生", role: "" },
+        ]},
+        { name: "制作", members: [
+          { name: "西山碧", role: "TL" },
+          { name: "小屋賢太朗", role: "" },
+          { name: "溝川楽", role: "" },
+          { name: "中森美幸", role: "" },
+          { name: "小田野竜士", role: "" },
+          { name: "中桐唯那", role: "" },
+        ]},
+      ]
+    },
+    { name: "総務", color: "総務情シス",
+      lead: [
+        { name: "平良祐吾", role: "統括" },
+      ],
+      groups: [
+        { name: "情シス", members: [
+          { name: "平良祐吾", role: "統括" },
+          { name: "井上貴雅", role: "" },
+          { name: "内崎健太", role: "" },
+        ]},
+        { name: "スクール", members: [
+          { name: "尾関一馬", role: "統括" },
+          { name: "永藤健吾", role: "" },
+        ]},
+      ]
+    },
+    { name: "エリア", color: "エリア",
+      lead: [
+        { name: "松本歩太", role: "統括" },
+      ],
+      groups: [
+        { name: "関東",
+          members: [ { name: "松本歩太", role: "統括" } ],
+          subGroups: []
+        },
+        { name: "関西",
+          members: [ { name: "平井開陸", role: "統括" } ],
+          subGroups: [
+            { name: "立命館", members: [
+              { name: "平井開陸", role: "支部統括" },
+              { name: "北村俊輝", role: "" },
+              { name: "萬年歩乃伽", role: "" },
+              { name: "小笹竣大", role: "" },
+              { name: "西山碧", role: "" },
+            ]},
+          ]
+        },
+        { name: "中部",
+          members: [ { name: "井上貴雅", role: "統括" } ],
+          subGroups: []
+        },
+        { name: "東北",
+          members: [ { name: "平山泰我", role: "統括" } ],
+          subGroups: []
+        },
+      ]
+    },
+    { name: "NoBorder", color: "NoBorder",
+      lead: [],
+      groups: [
+        { name: "NoBorder アプリ", members: [] },
+        { name: "YouTube 「NoBorder」本編", members: [] },
+        { name: "YouTube 「NoBorder X File」", members: [] },
+        { name: "YouTube 「NoBorder News」", members: [] },
+      ]
+    },
+  ],
+  // スクール受講者（ID 60配下）
+  schools: [
+    { name: "AI", tl: "尾関一馬", subTl: "永藤健吾",
+      students: ["永藤健吾","小笹竣大","尾関一馬","葛尾優樹"] },
+    { name: "SNS", tl: "尾関一馬", subTl: "小笹竣大",
+      students: ["西山碧","芹澤大義","守屋大地"] },
+    { name: "クリエイターズ", tl: "尾関一馬", subTl: "後藤隼星",
+      students: ["田端心温","石毛琳太郎","北村俊輝","鈴木琢仁"] },
+  ],
+  // Excelに記載なし。画面で追加・編集可能
+  onboarding: [],
+  unassigned: [],
+};
+
+// ====== メンバーの大学・エリア情報（Google Sheetsより） ======
+const MEMBER_INFO = {
+  "佐々木晴也":   { university: "京都大学",             area: "関西" },
+  "西原浩貴":     { university: "慶應義塾大学",         area: "関東" },
+  "森心美":       { university: "慶應義塾大学",         area: "関東" },
+  "八重樫陸":     { university: "UCL（ロンドン大学）",  area: "海外" },
+  "後藤隼星":     { university: "日本体育大学",         area: "関東" },
+  "小川空汰":     { university: "名古屋市立大学",       area: "中部" },
+  "永藤健吾":     { university: "名古屋工業大学",       area: "中部" },
+  "溝川楽":       { university: "関東学院大学",         area: "関東" },
+  "小笹竣大":     { university: "立命館大学",           area: "関西" },
+  "石毛琳太郎":   { university: "明治学院大学",         area: "関東" },
+  "山口諒真":     { university: "HELP",                 area: "海外" },
+  "田端心温":     { university: "京都薬科大学",         area: "関西" },
+  "平良祐吾":     { university: "慶應義塾大学",         area: "関東" },
+  "久次米謙":     { university: "東京医科大学",         area: "関東" },
+  "小林桜輔":     { university: "芝浦工業大学",         area: "関東" },
+  "平井開陸":     { university: "立命館大学",           area: "関西" },
+  "浦田航志":     { university: "北海道大学",           area: "北海道" },
+  "尾関一馬":     { university: "京都大学",             area: "関西" },
+  "松本歩太":     { university: "慶應義塾大学",         area: "関東" },
+  "守屋大地":     { university: "東京理科大学",         area: "関東" },
+  "葛尾優樹":     { university: "神戸大学",             area: "関西" },
+  "西山碧":       { university: "京都市立芸術大学",     area: "関西" },
+  "鈴木琢仁":     { university: "リンカーン大ジャパン", area: "海外" },
+  "北村俊輝":     { university: "立命館大学",           area: "関西" },
+  "小田野竜士":   { university: "法政大学",             area: "関東" },
+  "小屋賢太朗":   { university: "東京経済大学",         area: "関東" },
+  "中森美幸":     { university: "南山大学",             area: "中部" },
+  "平林紗良":     { university: "青山学院大学",         area: "関東" },
+  "萬年歩乃伽":   { university: "立命館大学",           area: "関西" },
+  "井上貴雅":     { university: "名古屋大学",           area: "中部" },
+  "エブラヒミ謙": { university: "慶應義塾大学",         area: "関東" },
+  "芹澤大義":     { university: "常葉大学",             area: "中部" },
+  "吉末憲生":     { university: "Sunway College",       area: "海外" },
+  "野々下光希":   { university: "愛知学院大学",         area: "中部" },
+  "内﨑健太":     { university: "近畿大学",             area: "関西" },
+  "内崎健太":     { university: "近畿大学",             area: "関西" },
+  "平山泰我":     { university: "東北学院大学",         area: "東北" },
+  "中桐唯那":     { university: "日本大学",             area: "関東" },
+  "髙久大輝":     { university: "慶應義塾大学",         area: "関東" },
+  "ニコルズ瑠玖": { university: "オレンジコーストカレッジ", area: "海外" },
+  "武藤樹":       { university: "和歌山大学",           area: "関西" },
+  "本田和暉":     { university: "同志社大学",           area: "関西" },
+  "木村知寛":     { university: "慶應義塾大学",         area: "関東" },
+  "柴田頼視":     { university: "東北学院大学",         area: "東北" },
+  "早坂優真":     { university: "東北学院大学",         area: "東北" },
+  "平野凛太郎":   { university: "早稲田大学",           area: "関東" },
+  "大橋凌":       { university: "東北学院大学",         area: "東北" },
+  "藤原優希":     { university: "京都先端科学大学",     area: "関西" },
+  "井本辰太朗":   { university: "明治大学大学院",       area: "関東" },
+  "瀬尾日々輝":   { university: "駒澤大学",             area: "関東" },
+  "山田凌睦":     { university: "Sunway College",       area: "海外" },
+  "岡田久輝":     { university: "関西学院大学",         area: "関西" },
+  "池田和喜":     { university: "武蔵野大学",           area: "関東" },
+};
+
+const AREA_LIST = ["関東","関西","中部","東北","北海道","九州","中国","四国","海外"];
+const AREA_COLORS = {
+  "関東":   { bg: "#e8ecff", fg: "#4f63d2" },
+  "関西":   { bg: "#e6f4ea", fg: "#2f7d4a" },
+  "中部":   { bg: "#fff1de", fg: "#a8631b" },
+  "東北":   { bg: "#efe6f7", fg: "#6a3e9a" },
+  "北海道": { bg: "#e3f2fd", fg: "#1565c0" },
+  "九州":   { bg: "#fde9ec", fg: "#b73a4a" },
+  "中国":   { bg: "#e0f2f1", fg: "#00695c" },
+  "四国":   { bg: "#fff3e0", fg: "#ef6c00" },
+  "海外":   { bg: "#fff8e1", fg: "#8a6d3b" },
+};
+
+function memberInfo(name) {
+  const ov = (typeof state !== "undefined" && state.memberOverrides) || {};
+  const tries = [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")];
+  for (const t of tries) if (ov[t]) return ov[t];
+  for (const t of tries) if (MEMBER_INFO[t]) return MEMBER_INFO[t];
+  return null;
+}
+function isDeleted(name) {
+  const del = (typeof state !== "undefined" && state.deletedMembers) || [];
+  const tries = [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")];
+  return tries.some(t => del.includes(t));
+}
+function areaTagHTML(area) {
+  const c = AREA_COLORS[area] || { bg: "#f0eee7", fg: "#6b6b6b" };
+  return `<span class="tag" style="background:${c.bg};color:${c.fg}">${escapeHtml(area)}</span>`;
+}
+function univTagHTML(univ) {
+  return `<span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">${escapeHtml(univ)}</span>`;
+}
+
+let allFilterSearch = "";
+let allFilterArea = "";
+function onAllSearchInput(v) {
+  allFilterSearch = v;
+  const el = document.getElementById("content");
+  if (el) el.innerHTML = renderAll();
+}
+function onAllAreaChange(v) {
+  allFilterArea = v;
+  const el = document.getElementById("content");
+  if (el) el.innerHTML = renderAll();
+}
+
+// 全メンバータブのアサイン状況フィルター（"" = すべて）
+let allFilterAssign = "";
+function onAllAssignChange(v) {
+  allFilterAssign = (allFilterAssign === v) ? "" : v;
+  const el = document.getElementById("content");
+  if (el) el.innerHTML = renderAll();
+}
+
+// ====== Firebase 初期化 ======
+const firebaseConfig = {
+  apiKey: "AIzaSyB7l2Osfh4WzFuMnVAs1EfR-i74C-Hhy6s",
+  authDomain: "rvss-org.firebaseapp.com",
+  projectId: "rvss-org",
+  storageBucket: "rvss-org.firebasestorage.app",
+  messagingSenderId: "701915922312",
+  appId: "1:701915922312:web:6142bc03e734272c56043d",
+  measurementId: "G-GDF4438J7C"
+};
+firebase.initializeApp(firebaseConfig);
+const fdb = firebase.firestore();
+const DOC_REF = fdb.collection("org").doc("main");
+
+// ====== 編集モード判定（URLパラメータで切り替え） ======
+// 共有URL: https://rvss-org.vercel.app/           → 閲覧モード（誰でも）
+// 編集URL: https://rvss-org.vercel.app/?key=<KEY> → 編集モード（オーナーのみ）
+const EDIT_KEY = "ozasa-rvss-admin-2026";  // ← 必要なら書き換えて再デプロイ
+const isEditMode = new URLSearchParams(location.search).get("key") === EDIT_KEY;
+
+function applyMode() {
+  document.body.classList.toggle("view-mode", !isEditMode);
+  updateModeBadge();
+}
+function updateModeBadge() {
+  const h1 = document.querySelector("h1");
+  if (!h1) return;
+  let badge = document.getElementById("mode-badge");
+  if (!badge) {
+    badge = document.createElement("span");
+    badge.id = "mode-badge";
+    badge.className = "mode-badge";
+    h1.appendChild(badge);
+  }
+  if (isEditMode) {
+    badge.textContent = "編集モード";
+    badge.className = "mode-badge edit";
+  } else {
+    badge.style.display = "none";
+  }
+}
+
+function setStatus(text, color) {
+  const el = document.getElementById("sync-status");
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = color || "var(--muted)";
+}
+
+let writeTimer = null;
+function pushToFirestore() {
+  // 閲覧モードでは絶対にクラウドDBへ書き込まない（読み取り専用）
+  if (!isEditMode) return;
+  setStatus("⏳ 同期中…");
+  clearTimeout(writeTimer);
+  writeTimer = setTimeout(() => {
+    DOC_REF.set({ data: state, updatedAt: Date.now() })
+      .then(() => setStatus("✅ 同期済み", "#2f7d4a"))
+      .catch(e => setStatus("❌ " + e.message, "#b73a4a"));
+  }, 300);
+}
+
+// ====== 状態管理 ======
+const STORAGE_KEY = "rvss-org-v1";
+let state = load();
+
+function ensureFields(s) {
+  if (!s.deletedMembers) s.deletedMembers = [];
+  if (!s.memberOverrides) s.memberOverrides = {};
+  return s;
+}
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return ensureFields(JSON.parse(raw));
+  } catch(e){}
+  return ensureFields(JSON.parse(JSON.stringify(INITIAL)));
+}
+function save() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  pushToFirestore();
+}
+
+// Firestore リアルタイム購読：他端末・他ユーザーの変更を即反映
+DOC_REF.onSnapshot(snap => {
+  if (!snap.exists) {
+    // 初回：現在のローカル state をクラウドにアップロード
+    pushToFirestore();
+    return;
+  }
+  const remote = snap.data().data;
+  if (!remote) return;
+  if (JSON.stringify(remote) === JSON.stringify(state)) {
+    setStatus("✅ 同期済み", "#2f7d4a");
+    return;
+  }
+  state = ensureFields(remote);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  render();
+  setStatus("✅ 同期済み", "#2f7d4a");
+}, err => {
+  setStatus("❌ 接続エラー: " + err.message, "#b73a4a");
+});
+function resetData() {
+  confirmDialog("初期データに戻します。よろしいですか？", () => {
+    state = JSON.parse(JSON.stringify(INITIAL));
+    save(); render();
+  });
+}
+function exportJSON() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "rvss-org-" + new Date().toISOString().slice(0,10) + ".json";
+  a.click();
+}
+
+// ====== タブ ======
+let currentTab = "projects";
+const TABS = [
+  { id: "projects", label: "プロジェクト" },
+  { id: "community", label: "コミュニティ運営" },
+  { id: "schools", label: "スクール受講者" },
+  { id: "onbo", label: "オンボ / 未アサイン" },
+  { id: "all", label: "全メンバー" },
+];
+
+// ====== 集計 ======
+function allAssignedNames() {
+  const set = new Set();
+  state.projects.forEach(p => {
+    (p.mentors||[]).forEach(n => set.add(n));
+    (p.students||[]).forEach(n => set.add(n));
+  });
+  return set;
+}
+function getStats() {
+  const pjAssigned = new Set();
+  state.projects.forEach(p => (p.students||[]).forEach(n => pjAssigned.add(n)));
+  const communityNames = new Set();
+  state.departments.forEach(d => {
+    (d.lead||[]).forEach(m => communityNames.add(m.name));
+    (d.groups||[]).forEach(g => {
+      g.members.forEach(m => communityNames.add(m.name));
+      (g.subGroups||[]).forEach(sg => sg.members.forEach(m => communityNames.add(m.name)));
+    });
+  });
+  const allMembers = new Set(state.members);
+  Object.keys(MEMBER_INFO).forEach(n => {
+    const alt = n.replace(/﨑/g, "崎");
+    const alt2 = n.replace(/崎/g, "﨑");
+    if (!allMembers.has(n) && !allMembers.has(alt) && !allMembers.has(alt2)) {
+      allMembers.add(n);
+    }
+  });
+  return {
+    projects: state.projects.length,
+    pjAssign: pjAssigned.size,
+    community: communityNames.size,
+    onbo: state.onboarding.length,
+    unassigned: state.unassigned.length,
+    total: allMembers.size,
+  };
+}
+
+// ====== レンダリング ======
+function render() {
+  renderStats();
+  renderTabs();
+  renderContent();
+  applyMode();
+}
+
+function renderStats() {
+  const s = getStats();
+  const items = [
+    { num: s.total,      lbl: "総メンバー数" },
+    { num: s.pjAssign,   lbl: "プロジェクト" },
+    { num: s.community,  lbl: "組織運営" },
+    { num: s.onbo,       lbl: "オンボ中" },
+    { num: s.unassigned, lbl: "未アサイン" },
+  ];
+  document.getElementById("stats").innerHTML = items.map(i =>
+    `<div class="stat"><div class="num">${i.num}</div><div class="lbl">${i.lbl}</div></div>`
+  ).join("");
+}
+
+function renderTabs() {
+  document.getElementById("tabs").innerHTML = TABS.map(t =>
+    `<div class="tab ${currentTab===t.id?'active':''}" onclick="setTab('${t.id}')">${t.label}</div>`
+  ).join("");
+}
+function setTab(id) { currentTab = id; render(); }
+
+function renderContent() {
+  const el = document.getElementById("content");
+  const tb = document.getElementById("toolbar-left");
+  tb.innerHTML = "";
+  if (currentTab === "projects") {
+    tb.innerHTML = `<button class="btn primary editor-only" onclick="addProject()">+ プロジェクトを追加</button>`;
+    el.innerHTML = `<div class="grid">${state.projects.map(renderProject).join("")}</div>`;
+  } else if (currentTab === "community") {
+    tb.innerHTML = `<button class="btn primary editor-only" onclick="addDept()">+ 部署を追加</button>`;
+    el.innerHTML = `<div class="grid">${state.departments.map(renderDept).join("")}</div>`;
+  } else if (currentTab === "schools") {
+    tb.innerHTML = `<button class="btn primary editor-only" onclick="addSchool()">+ スクールを追加</button>`;
+    el.innerHTML = `<div class="grid">${state.schools.map(renderSchool).join("")}</div>`;
+  } else if (currentTab === "onbo") {
+    el.innerHTML = renderOnbo();
+  } else if (currentTab === "all") {
+    tb.innerHTML = `
+      <input class="search" id="search" placeholder="メンバー検索…" value="${escapeHtml(allFilterSearch)}" oninput="onAllSearchInput(this.value)" style="min-width:200px"/>
+      <button class="btn primary editor-only" onclick="addMember()" style="margin-left:6px">+ メンバーを追加</button>
+    `;
+    el.innerHTML = renderAll();
+  }
+}
+
+function renderProject(p, i) {
+  const filled = (p.mentors?.length||0) + (p.students?.length||0);
+  const cap = p.capacity || 2;
+  const groupBlocks = (p.groups||[]).map((g, gi) => `
+    <div class="group-box">
+      <div class="group-head">
+        <div class="group-title" onclick="renameProjectGroup(${i},${gi})" title="クリックでグループ名変更" style="cursor:pointer">${escapeHtml(g.name)}</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="count-pill">${(g.members||[]).length}名</span>
+          <button class="icon-btn editor-only" onclick="deleteProjectGroup(${i},${gi})" title="グループ削除">×</button>
+        </div>
+      </div>
+      ${(g.members||[]).map((m, mi) => `
+        <div class="slot">
+          <div><div class="name" onclick="renameProjectGroupMember(${i},${gi},${mi})" title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="tag editable" onclick="editProjectGroupMemberRole(${i},${gi},${mi})" title="クリックでタグ変更">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
+            <button class="icon-btn editor-only" onclick="removeProjectGroupMember(${i},${gi},${mi})">×</button>
+          </div>
+        </div>
+      `).join("")}
+      <button class="btn-add editor-only" onclick="addProjectGroupMember(${i},${gi})">+ メンバーを追加</button>
+    </div>
+  `).join("");
+  return `
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">${escapeHtml(p.name)}</div>
+        <div>
+          <span class="count-pill">${p.students.length}/${cap}名</span>
+          <button class="btn editor-only" onclick="editProject(${i})">編集</button>
+        </div>
+      </div>
+      <div class="section-label">メンター</div>
+      ${(p.mentors||[]).map(n => slot(n, "", () => `removeFromProject(${i},'mentors','${n}')`)).join("") ||
+        `<div class="slot empty editor-only" onclick="addToProject(${i},'mentors')">+ メンターを設定</div>`}
+      <div class="section-label">学生（原則${cap}名）</div>
+      ${(p.students||[]).map(n => slot(n, "学生", () => `removeFromProject(${i},'students','${n}')`, "PJアサイン")).join("")}
+      ${p.students.length < cap ? `<div class="slot empty editor-only" onclick="addToProject(${i},'students')">+ 学生を追加</div>` : ""}
+      <button class="btn-add editor-only" onclick="addToProject(${i},'students',true)">+ 追加枠</button>
+      ${groupBlocks}
+      <button class="btn-add editor-only" onclick="addProjectGroup(${i})" style="margin-top:12px;border-style:solid;background:var(--accent-soft);color:var(--accent)">+ グループを追加</button>
+    </div>
+  `;
+}
+
+function slot(name, role, removeFn, tag) {
+  return `<div class="slot">
+    <div>
+      <div class="name">${escapeHtml(name)}</div>
+      ${role ? `<div class="role">${escapeHtml(role)}</div>` : ""}
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      ${tag ? `<span class="tag pj">${tag}</span>` : ""}
+      <button class="icon-btn editor-only" onclick="${removeFn()}">×</button>
+    </div>
+  </div>`;
+}
+
+function deptTotal(d) {
+  const lead = (d.lead||[]).length;
+  const grp = (d.groups||[]).reduce((s,g)=> s + (g.members||[]).length + (g.subGroups||[]).reduce((ss,sg)=>ss+(sg.members||[]).length,0), 0);
+  return lead + grp;
+}
+
+function renderDept(d, i) {
+  const leadRows = (d.lead||[]).map((m, li) => `
+    <div class="slot">
+      <div><div class="name" onclick="renameDeptLead(${i},${li})" title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="tag editable" onclick="editDeptLeadRole(${i},${li})" title="クリックでタグ変更">${escapeHtml(m.role)}</span>
+        <button class="icon-btn editor-only" onclick="removeDeptLead(${i},${li})">×</button>
+      </div>
+    </div>
+  `).join("");
+
+  const groupBlocks = (d.groups||[]).map((g, gi) => `
+    <div class="group-box">
+      <div class="group-head">
+        <div class="group-title" onclick="renameGroup(${i},${gi})" title="クリックでサブグループ名変更" style="cursor:pointer">${escapeHtml(g.name)}</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="count-pill">${g.members.length}名</span>
+          <button class="icon-btn editor-only" onclick="deleteGroup(${i},${gi})" title="グループ削除">×</button>
+        </div>
+      </div>
+      ${g.members.map((m, mi) => `
+        <div class="slot">
+          <div><div class="name" onclick="renameGroupMember(${i},${gi},${mi})" title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="tag editable" onclick="editGroupMemberRole(${i},${gi},${mi})" title="クリックでタグ変更">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
+            <button class="icon-btn editor-only" onclick="removeGroupMember(${i},${gi},${mi})">×</button>
+          </div>
+        </div>
+      `).join("")}
+      <button class="btn-add editor-only" onclick="addGroupMember(${i},${gi})">+ メンバーを追加</button>
+      ${(g.subGroups||[]).map((sg, sgi) => `
+        <div class="subgroup-box">
+          <div class="group-head">
+            <div class="subgroup-title" onclick="renameSubGroup(${i},${gi},${sgi})" style="cursor:pointer" title="クリックで名前変更">${escapeHtml(sg.name)}</div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span class="count-pill">${sg.members.length}名</span>
+              <button class="icon-btn editor-only" onclick="deleteSubGroup(${i},${gi},${sgi})" title="削除">×</button>
+            </div>
+          </div>
+          ${sg.members.map((m, mi) => `
+            <div class="slot">
+              <div><div class="name" onclick="renameSubGroupMember(${i},${gi},${sgi},${mi})" style="cursor:pointer" title="クリックで名前変更">${escapeHtml(m.name)}</div></div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <span class="tag editable" onclick="editSubGroupMemberRole(${i},${gi},${sgi},${mi})" title="クリックでタグ変更">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
+                <button class="icon-btn editor-only" onclick="removeSubGroupMember(${i},${gi},${sgi},${mi})">×</button>
+              </div>
+            </div>
+          `).join("")}
+          <button class="btn-add editor-only" onclick="addSubGroupMember(${i},${gi},${sgi})">+ メンバーを追加</button>
+        </div>
+      `).join("")}
+      <button class="btn-add editor-only" onclick="addSubGroup(${i},${gi})" style="margin-top:8px;border-style:solid;background:#f0eee7">+ さらに細分化（大学・支部など）</button>
+    </div>
+  `).join("");
+
+  return `
+    <div class="card dept-card ${d.color}">
+      <div class="card-head">
+        <div class="card-title" onclick="renameDept(${i})" title="クリックで部署名変更" style="cursor:pointer">${escapeHtml(d.name)}</div>
+        <span class="count-pill">${deptTotal(d)}名</span>
+      </div>
+      ${leadRows}
+      <button class="btn-add editor-only" onclick="addDeptLead(${i})">+ 統括・副統括などを追加</button>
+      ${groupBlocks}
+      <button class="btn-add editor-only" onclick="addGroup(${i})" style="margin-top:12px;border-style:solid;background:var(--accent-soft);color:var(--accent)">+ サブグループを追加</button>
+    </div>
+  `;
+}
+
+function renderSchool(s, i) {
+  return `
+    <div class="card dept-card スクール">
+      <div class="card-head">
+        <div class="card-title">${escapeHtml(s.name)}</div>
+        <div>
+          <span class="count-pill">${s.students.length}名</span>
+          <button class="btn editor-only" onclick="deleteSchool(${i})" style="color:var(--pink-text)">削除</button>
+        </div>
+      </div>
+      <div class="section-label">TL / 副TL</div>
+      <div class="slot">
+        <div><div class="name">${escapeHtml(s.tl||"")}</div><div class="role">TL</div></div>
+        <button class="btn editor-only" onclick="setSchoolLead(${i},'tl')">変更</button>
+      </div>
+      <div class="slot">
+        <div><div class="name">${escapeHtml(s.subTl||"")}</div><div class="role">副TL</div></div>
+        <button class="btn editor-only" onclick="setSchoolLead(${i},'subTl')">変更</button>
+      </div>
+      <div class="section-label">受講者</div>
+      ${s.students.map(n => `
+        <div class="slot">
+          <div class="name">${escapeHtml(n)}</div>
+          <button class="icon-btn editor-only" onclick="removeSchoolStudent(${i},'${n}')">×</button>
+        </div>
+      `).join("")}
+      <button class="btn-add editor-only" onclick="addSchoolStudent(${i})">+ 受講者を追加</button>
+    </div>
+  `;
+}
+
+function addSchool() {
+  inputDialog("スクール名", "", (name) => {
+    if (!name) return;
+    state.schools.push({ name, tl: "", subTl: "", students: [] });
+    save(); render();
+  });
+}
+function deleteSchool(i) {
+  confirmDialog("削除しますか？", () => {
+    state.schools.splice(i,1); save(); render();
+  });
+}
+function setSchoolLead(i, key) {
+  pickMember(key === "tl" ? "TLを選択" : "副TLを選択", (n) => {
+    state.schools[i][key] = n; save(); render();
+  });
+}
+function addSchoolStudent(i) {
+  pickMember("受講者を選択", (n) => {
+    state.schools[i].students.push(n); save(); render();
+  }, state.schools[i].students);
+}
+function removeSchoolStudent(i, name) {
+  state.schools[i].students = state.schools[i].students.filter(n => n !== name);
+  save(); render();
+}
+
+function renderOnbo() {
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head"><div class="card-title">オンボーディング中</div>
+        <button class="btn editor-only" onclick="addToList('onboarding')">+ 追加</button></div>
+      <div class="unassigned-list">
+        ${state.onboarding.map((n,i)=>`<span class="chip onbo">${escapeHtml(n)} <button class="icon-btn editor-only" onclick="removeFromList('onboarding',${i})">×</button></span>`).join("")}
+      </div>
+      <div class="warn">オンボ期間：1ヶ月。終了後にプロジェクト or コミュニティ運営へ移行。</div>
+    </div>
+    <div class="card">
+      <div class="card-head"><div class="card-title">未アサイン</div>
+        <button class="btn editor-only" onclick="addToList('unassigned')">+ 追加</button></div>
+      <div class="unassigned-list">
+        ${state.unassigned.map((n,i)=>`<span class="chip">${escapeHtml(n)} <button class="icon-btn editor-only" onclick="removeFromList('unassigned',${i})">×</button></span>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+// 全メンバーごとに「プロジェクト/コミュニティ運営/スクール/オンボ/未アサイン」を集計したマップを返す
+function buildMemberMap() {
+  const map = {};
+  const ensure = (n) => { if(!map[n]) map[n]={pjs:[],depts:[],onbo:false,unassigned:false,schools:[]}; if(!map[n].schools) map[n].schools=[]; return map[n]; };
+  state.members.forEach(n => { if (!isDeleted(n)) ensure(n); });
+  // Google Sheets由来のメンバーも追加（未登録分・未削除分）
+  Object.keys(MEMBER_INFO).forEach(n => {
+    if (isDeleted(n)) return;
+    const alt = n.replace(/﨑/g, "崎");
+    const alt2 = n.replace(/崎/g, "﨑");
+    if (!map[n] && !map[alt] && !map[alt2]) ensure(n);
+  });
+  state.projects.forEach(p => {
+    p.students.forEach(n => { ensure(n).pjs.push(p.name); });
+    (p.groups||[]).forEach(g => g.members.forEach(m => { ensure(m.name).pjs.push(p.name+"/"+g.name+(m.role?"("+m.role+")":"")); }));
+  });
+  state.departments.forEach(d => {
+    (d.lead||[]).forEach(m => { ensure(m.name).depts.push(d.name+"/"+m.role); });
+    (d.groups||[]).forEach(g => {
+      g.members.forEach(m => { ensure(m.name).depts.push(d.name+"/"+g.name+(m.role?"("+m.role+")":"")); });
+      (g.subGroups||[]).forEach(sg => sg.members.forEach(m => { ensure(m.name).depts.push(d.name+"/"+g.name+"/"+sg.name+(m.role?"("+m.role+")":"")); }));
+    });
+  });
+  (state.schools||[]).forEach(s => {
+    const add = (n, role) => { ensure(n).schools.push(s.name+"/"+role); };
+    if (s.tl) add(s.tl, "TL");
+    if (s.subTl) add(s.subTl, "副TL");
+    s.students.forEach(n => add(n, "受講"));
+  });
+  state.onboarding.forEach(n => { ensure(n).onbo=true; });
+  state.unassigned.forEach(n => { ensure(n).unassigned=true; });
+  return map;
+}
+
+function renderAll() {
+  const q = allFilterSearch.trim();
+  const map = buildMemberMap();
+
+  // エリア集計
+  const areaCounts = {};
+  Object.keys(map).forEach(n => {
+    const mi = memberInfo(n);
+    if (mi && mi.area) areaCounts[mi.area] = (areaCounts[mi.area]||0) + 1;
+  });
+  const areaSummary = AREA_LIST.filter(a => areaCounts[a]).map(a => {
+    const c = AREA_COLORS[a];
+    const active = allFilterArea === a;
+    const style = `background:${c.bg};color:${c.fg};font-size:13px;padding:6px 14px;cursor:pointer;${active?'outline:2px solid '+c.fg+';outline-offset:1px;font-weight:700':''}`;
+    return `<span class="tag" style="${style}" onclick="onAllAreaChange('${active?'':a}')">${a} ${areaCounts[a]}</span>`;
+  }).join(" ");
+  const clearChip = allFilterArea
+    ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllAreaChange('')">エリア絞り込みを解除</span>`
+    : "";
+
+  // アサイン状況フィルター
+  const assignDefs = [
+    { id: "noPj",        label: "プロジェクト未所属", test: i => i.pjs.length === 0 },
+    { id: "noCommunity", label: "コミュニティ運営なし", test: i => i.depts.length === 0 },
+    { id: "noAny",       label: "どこにも未所属",     test: i => i.pjs.length === 0 && i.depts.length === 0 && (i.schools||[]).length === 0 },
+  ];
+  const assignDef = assignDefs.find(d => d.id === allFilterAssign);
+  const assignSummary = assignDefs.map(d => {
+    const count = Object.values(map).filter(d.test).length;
+    const active = allFilterAssign === d.id;
+    const style = `background:${active?'#2a2a2a':'#fff'};color:${active?'#fff':'#6b6b6b'};border:1px solid ${active?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${active?'font-weight:700':''}`;
+    return `<span class="tag" style="${style}" onclick="onAllAssignChange('${d.id}')">${d.label} ${count}</span>`;
+  }).join(" ");
+
+  const filtered = Object.entries(map)
+    .filter(([n]) => !q || n.includes(q))
+    .filter(([n]) => {
+      if (!allFilterArea) return true;
+      const mi = memberInfo(n);
+      return mi && mi.area === allFilterArea;
+    })
+    .filter(([n, info]) => !assignDef || assignDef.test(info))
+    .sort(([a],[b]) => a.localeCompare(b,"ja"));
+
+  const rows = filtered.map(([n,info]) => {
+    const mi = memberInfo(n) || {};
+    return `
+      <div class="slot">
+        <div>
+          <div class="name">${escapeHtml(n)}</div>
+          <div class="role" style="line-height:1.8">
+            ${mi.university ? univTagHTML(mi.university) : ""}
+            ${mi.area ? areaTagHTML(mi.area) : ""}
+            ${info.pjs.map(p=>`<span class="tag pj">${escapeHtml(p)}</span>`).join(" ")}
+            ${info.depts.map(d=>`<span class="tag">${escapeHtml(d)}</span>`).join(" ")}
+            ${(info.schools||[]).map(s=>`<span class="tag" style="background:var(--purple);color:var(--purple-text)">スクール:${escapeHtml(s)}</span>`).join(" ")}
+            ${info.onbo?'<span class="tag" style="background:var(--orange);color:var(--orange-text)">オンボ</span>':''}
+            ${info.unassigned?'<span class="tag" style="background:var(--pink);color:var(--pink-text)">未アサイン</span>':''}
+          </div>
+        </div>
+        <div style="display:flex;gap:4px;align-items:center">
+          <button class="btn editor-only" onclick="editMember('${n}')" style="font-size:11px;padding:4px 10px">編集</button>
+          <button class="btn editor-only" onclick="deleteMember('${n}')" title="退会扱いにする（全アサインから除外）" style="font-size:11px;padding:4px 10px;color:var(--pink-text)">退会</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  // 削除済みメンバー（復元可能）
+  const deletedList = (state.deletedMembers || []);
+  const deletedSection = deletedList.length > 0 ? `
+    <div style="margin-top:24px;padding-top:16px;border-top:1px dashed var(--border)">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">退会者（${deletedList.length}名・クリックで復元）</div>
+      <div class="unassigned-list">
+        ${deletedList.map(n => `<span class="chip editor-only" style="background:#f0eee7;color:var(--muted);cursor:pointer" onclick="restoreMember('${n}')" title="復元">↻ ${escapeHtml(n)}</span>`).join("")}
+      </div>
+    </div>
+  ` : "";
+
+  const filterNote = [allFilterArea, assignDef && assignDef.label].filter(Boolean).join(" / ");
+  const titleText = filterNote
+    ? `全メンバー（${filtered.length} / 総${Object.keys(map).length}名） — ${filterNote}`
+    : `全メンバー（${Object.keys(map).length}名）`;
+  return `
+    <div class="card">
+      <div class="card-head"><div class="card-title">${escapeHtml(titleText)}</div></div>
+      <div style="margin-bottom:10px;line-height:2">
+        <span style="font-size:12px;color:var(--muted);margin-right:6px">エリア:</span>${areaSummary || '<span style="font-size:12px;color:var(--muted)">なし</span>'}${clearChip}
+      </div>
+      <div style="margin-bottom:14px;line-height:2">
+        <span style="font-size:12px;color:var(--muted);margin-right:6px">アサイン状況:</span>${assignSummary}
+        ${allFilterAssign ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllAssignChange('${allFilterAssign}')">絞り込みを解除</span>` : ""}
+      </div>
+      ${rows || '<div class="warn">該当メンバーがいません</div>'}
+      ${deletedSection}
+    </div>
+  `;
+}
+
+// ====== 操作 ======
+// iframe や厳格なブラウザで prompt が動かない環境向けの代替
+function inputDialog(title, defaultValue, onOk) {
+  openModal(`
+    <h3>${escapeHtml(title)}</h3>
+    <input id="input-dlg" value="${escapeHtml(defaultValue||"")}" />
+    <div class="actions">
+      <button class="btn" onclick="closeModal()">キャンセル</button>
+      <button class="btn primary" id="input-ok">OK</button>
+    </div>
+  `);
+  const inp = document.getElementById("input-dlg");
+  inp.focus(); inp.select();
+  const submit = () => {
+    const v = inp.value;
+    closeModal();
+    onOk(v);
+  };
+  document.getElementById("input-ok").onclick = submit;
+  inp.onkeydown = (e) => { if (e.key === "Enter") submit(); };
+}
+function confirmDialog(message, onYes) {
+  openModal(`
+    <h3>${escapeHtml(message)}</h3>
+    <div class="actions">
+      <button class="btn" onclick="closeModal()">キャンセル</button>
+      <button class="btn primary" id="confirm-ok">OK</button>
+    </div>
+  `);
+  document.getElementById("confirm-ok").onclick = () => { closeModal(); onYes(); };
+}
+
+function openModal(html) {
+  document.getElementById("modal").innerHTML = html;
+  document.getElementById("modal-bg").classList.add("open");
+}
+function closeModal() { document.getElementById("modal-bg").classList.remove("open"); }
+
+function pickMember(title, onPick, exclude=[]) {
+  // state.members と MEMBER_INFO 両方からマージ。削除済みは除外。
+  const set = new Set();
+  state.members.forEach(n => { if (!isDeleted(n)) set.add(n); });
+  Object.keys(MEMBER_INFO).forEach(n => {
+    if (isDeleted(n)) return;
+    const alt = n.replace(/﨑/g, "崎");
+    const alt2 = n.replace(/崎/g, "﨑");
+    if (!set.has(n) && !set.has(alt) && !set.has(alt2)) set.add(n);
+  });
+  const list = [...set]
+    .filter(n => !exclude.includes(n))
+    .sort((a,b) => a.localeCompare(b,"ja"));
+  openModal(`
+    <h3>${title}</h3>
+    <input id="pick-search" placeholder="検索…" oninput="filterPicks()"/>
+    <div id="pick-list">
+      ${list.map(n => `<div class="member-pick" data-name="${escapeHtml(n)}" onclick="window.__pick('${n}')">${escapeHtml(n)}</div>`).join("")}
+    </div>
+    <div style="border-top:1px dashed var(--border);margin-top:8px;padding-top:8px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">一覧にいない場合は新規追加</div>
+      <input id="pick-new-name" placeholder="新しいメンバー名を入力"/>
+      <button class="btn primary" onclick="window.__addAndPick()" style="width:100%;padding:10px">＋ 新規追加して選択</button>
+    </div>
+    <div class="actions"><button class="btn" onclick="closeModal()">キャンセル</button></div>
+  `);
+  window.__pick = (n) => { closeModal(); onPick(n); };
+  window.__addAndPick = () => {
+    const name = (document.getElementById("pick-new-name").value || "").trim();
+    if (!name) return;
+    if (!state.members.includes(name)) state.members.push(name);
+    closeModal();
+    onPick(name);
+  };
+  window.filterPicks = () => {
+    const q = document.getElementById("pick-search").value.trim();
+    document.querySelectorAll("#pick-list .member-pick").forEach(el => {
+      el.style.display = (!q || el.dataset.name.includes(q)) ? "" : "none";
+    });
+  };
+}
+
+function addToProject(idx, key, expand=false) {
+  const exclude = state.projects[idx][key];
+  if (expand) state.projects[idx].capacity = (state.projects[idx].capacity||2) + 1;
+  pickMember("メンバーを選択", (n) => {
+    state.projects[idx][key].push(n);
+    save(); render();
+  }, exclude);
+}
+function removeFromProject(idx, key, name) {
+  state.projects[idx][key] = state.projects[idx][key].filter(n => n !== name);
+  save(); render();
+}
+function editProject(idx) {
+  const p = state.projects[idx];
+  openModal(`
+    <h3>プロジェクト編集</h3>
+    <input id="ep-name" value="${escapeHtml(p.name)}" />
+    <label style="font-size:12px;color:var(--muted)">学生定員</label>
+    <input id="ep-cap" type="number" value="${p.capacity||2}" />
+    <div class="actions">
+      <button class="btn editor-only" onclick="deleteProject(${idx})" style="color:var(--pink-text)">削除</button>
+      <button class="btn" onclick="closeModal()">キャンセル</button>
+      <button class="btn primary" onclick="saveProject(${idx})">保存</button>
+    </div>
+  `);
+}
+function saveProject(idx) {
+  state.projects[idx].name = document.getElementById("ep-name").value;
+  state.projects[idx].capacity = parseInt(document.getElementById("ep-cap").value) || 2;
+  save(); closeModal(); render();
+}
+function deleteProject(idx) {
+  confirmDialog("削除しますか？", () => {
+    state.projects.splice(idx,1); save(); render();
+  });
+}
+function addProject() {
+  inputDialog("プロジェクト名", "", (name) => {
+    if (!name) return;
+    state.projects.push({ name, mentors: [], students: [], capacity: 2 });
+    save(); render();
+  });
+}
+
+function addProjectGroup(idx) {
+  inputDialog("グループ名（例：開発、企画、デザイン）", "", (name) => {
+    if (!name) return;
+    if (!state.projects[idx].groups) state.projects[idx].groups = [];
+    state.projects[idx].groups.push({ name, members: [] });
+    save(); render();
+  });
+}
+function deleteProjectGroup(idx, gi) {
+  confirmDialog("このグループを削除しますか？", () => {
+    state.projects[idx].groups.splice(gi,1); save(); render();
+  });
+}
+function renameProjectGroup(idx, gi) {
+  inputDialog("グループ名を変更", state.projects[idx].groups[gi].name, (v) => {
+    if (!v.trim()) return;
+    state.projects[idx].groups[gi].name = v.trim();
+    save(); render();
+  });
+}
+function addProjectGroupMember(idx, gi) {
+  inputDialog("役割（任意。TL など。空欄でメンバー）", "", (role) => {
+    pickMember("メンバーを選択", (n) => {
+      state.projects[idx].groups[gi].members.push({ name: n, role });
+      save(); render();
+    });
+  });
+}
+function removeProjectGroupMember(idx, gi, mi) {
+  state.projects[idx].groups[gi].members.splice(mi,1); save(); render();
+}
+function renameProjectGroupMember(idx, gi, mi) {
+  inputDialog("メンバー名を変更", state.projects[idx].groups[gi].members[mi].name, (v) => {
+    if (!v.trim()) return;
+    state.projects[idx].groups[gi].members[mi].name = v.trim();
+    if (!state.members.includes(v.trim())) state.members.push(v.trim());
+    save(); render();
+  });
+}
+function editProjectGroupMemberRole(idx, gi, mi) {
+  inputDialog("タグを編集（空でタグなし）", state.projects[idx].groups[gi].members[mi].role || "", (v) => {
+    state.projects[idx].groups[gi].members[mi].role = v;
+    save(); render();
+  });
+}
+
+function addDept() {
+  inputDialog("部署名", "", (name) => {
+    if (!name) return;
+    state.departments.push({ name, color: "", lead: [], groups: [] });
+    save(); render();
+  });
+}
+function addDeptLead(idx) {
+  inputDialog("役割（例：統括、副統括、秘書）", "統括", (role) => {
+    pickMember("メンバーを選択", (n) => {
+      state.departments[idx].lead.push({ name: n, role: role || "統括" });
+      save(); render();
+    });
+  });
+}
+function removeDeptLead(idx, li) {
+  state.departments[idx].lead.splice(li,1); save(); render();
+}
+function addGroup(idx) {
+  inputDialog("サブグループ名（例：採用、制作、関東）", "", (name) => {
+    if (!name) return;
+    state.departments[idx].groups.push({ name, members: [] });
+    save(); render();
+  });
+}
+function deleteGroup(idx, gi) {
+  confirmDialog("このサブグループを削除しますか？", () => {
+    state.departments[idx].groups.splice(gi,1); save(); render();
+  });
+}
+function addGroupMember(idx, gi) {
+  inputDialog("役割（任意。TLなど。空欄でメンバー）", "", (role) => {
+    pickMember("メンバーを選択", (n) => {
+      state.departments[idx].groups[gi].members.push({ name: n, role });
+      save(); render();
+    });
+  });
+}
+function removeGroupMember(idx, gi, mi) {
+  state.departments[idx].groups[gi].members.splice(mi,1); save(); render();
+}
+function editDeptLeadRole(idx, li) {
+  inputDialog("タグを編集（統括 / 副統括 / 秘書 など）", state.departments[idx].lead[li].role, (v) => {
+    state.departments[idx].lead[li].role = v;
+    save(); render();
+  });
+}
+function renameDeptLead(idx, li) {
+  inputDialog("メンバー名を変更", state.departments[idx].lead[li].name, (v) => {
+    if (!v.trim()) return;
+    state.departments[idx].lead[li].name = v.trim();
+    if (!state.members.includes(v.trim())) state.members.push(v.trim());
+    save(); render();
+  });
+}
+function editGroupMemberRole(idx, gi, mi) {
+  inputDialog("タグを編集（TL / 統括 / 立命館 など。空でタグなし）", state.departments[idx].groups[gi].members[mi].role || "", (v) => {
+    state.departments[idx].groups[gi].members[mi].role = v;
+    save(); render();
+  });
+}
+function renameGroupMember(idx, gi, mi) {
+  inputDialog("メンバー名を変更", state.departments[idx].groups[gi].members[mi].name, (v) => {
+    if (!v.trim()) return;
+    state.departments[idx].groups[gi].members[mi].name = v.trim();
+    if (!state.members.includes(v.trim())) state.members.push(v.trim());
+    save(); render();
+  });
+}
+function renameDept(idx) {
+  inputDialog("部署名を変更", state.departments[idx].name, (v) => {
+    if (!v.trim()) return;
+    state.departments[idx].name = v.trim();
+    save(); render();
+  });
+}
+function addSubGroup(idx, gi) {
+  inputDialog("細分化グループ名（例：立命館、京大、東大）", "", (name) => {
+    if (!name) return;
+    const g = state.departments[idx].groups[gi];
+    if (!g.subGroups) g.subGroups = [];
+    g.subGroups.push({ name, members: [] });
+    save(); render();
+  });
+}
+function deleteSubGroup(idx, gi, sgi) {
+  confirmDialog("このグループを削除しますか？", () => {
+    state.departments[idx].groups[gi].subGroups.splice(sgi, 1);
+    save(); render();
+  });
+}
+function renameSubGroup(idx, gi, sgi) {
+  inputDialog("グループ名を変更", state.departments[idx].groups[gi].subGroups[sgi].name, (v) => {
+    if (!v.trim()) return;
+    state.departments[idx].groups[gi].subGroups[sgi].name = v.trim();
+    save(); render();
+  });
+}
+function addSubGroupMember(idx, gi, sgi) {
+  inputDialog("役割（任意。空欄でメンバー）", "", (role) => {
+    pickMember("メンバーを選択", (n) => {
+      state.departments[idx].groups[gi].subGroups[sgi].members.push({ name: n, role });
+      save(); render();
+    });
+  });
+}
+function removeSubGroupMember(idx, gi, sgi, mi) {
+  state.departments[idx].groups[gi].subGroups[sgi].members.splice(mi, 1);
+  save(); render();
+}
+function renameSubGroupMember(idx, gi, sgi, mi) {
+  inputDialog("メンバー名を変更", state.departments[idx].groups[gi].subGroups[sgi].members[mi].name, (v) => {
+    if (!v.trim()) return;
+    state.departments[idx].groups[gi].subGroups[sgi].members[mi].name = v.trim();
+    if (!state.members.includes(v.trim())) state.members.push(v.trim());
+    save(); render();
+  });
+}
+function editSubGroupMemberRole(idx, gi, sgi, mi) {
+  inputDialog("タグを編集（空でタグなし）", state.departments[idx].groups[gi].subGroups[sgi].members[mi].role || "", (v) => {
+    state.departments[idx].groups[gi].subGroups[sgi].members[mi].role = v;
+    save(); render();
+  });
+}
+
+function renameGroup(idx, gi) {
+  inputDialog("サブグループ名を変更", state.departments[idx].groups[gi].name, (v) => {
+    if (!v.trim()) return;
+    state.departments[idx].groups[gi].name = v.trim();
+    save(); render();
+  });
+}
+
+function addToList(listName) {
+  pickMember("メンバーを選択", (n) => {
+    state[listName].push(n); save(); render();
+  }, state[listName]);
+}
+function removeFromList(listName, idx) {
+  state[listName].splice(idx,1); save(); render();
+}
+
+function addMember() {
+  const areaOpts = AREA_LIST.map(a => `<option value="${a}">${a}</option>`).join("");
+  openModal(`
+    <h3>新メンバーを登録</h3>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">名前 <span style="color:var(--pink-text)">*</span></label>
+    <input id="nm-name" placeholder="氏名"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">大学名</label>
+    <input id="nm-univ" placeholder="例：京都大学"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">エリア</label>
+    <select id="nm-area">
+      <option value="">（未設定）</option>
+      ${areaOpts}
+    </select>
+    <div class="actions">
+      <button class="btn" onclick="closeModal()">キャンセル</button>
+      <button class="btn primary" id="nm-ok">登録</button>
+    </div>
+  `);
+  const nameInput = document.getElementById("nm-name");
+  nameInput.focus();
+  const submit = () => {
+    const name = (document.getElementById("nm-name").value || "").trim();
+    if (!name) return;
+    if (state.members.includes(name)) { alert("既に存在します"); return; }
+    const univ = (document.getElementById("nm-univ").value || "").trim();
+    const area = document.getElementById("nm-area").value;
+    state.members.push(name);
+    if (univ || area) {
+      if (!state.memberOverrides) state.memberOverrides = {};
+      state.memberOverrides[name] = { university: univ, area: area };
+    }
+    save(); closeModal(); render();
+  };
+  document.getElementById("nm-ok").onclick = submit;
+  nameInput.onkeydown = (e) => { if (e.key === "Enter") document.getElementById("nm-univ").focus(); };
+}
+function deleteMember(name) {
+  confirmDialog(`${name} を退会扱いにしますか？（全アサインから除外します。退会者リストから復元可能）`, () => {
+    state.members = state.members.filter(n => n !== name);
+    // MEMBER_INFO由来でも非表示にできるよう削除リストに追加
+    if (!state.deletedMembers) state.deletedMembers = [];
+    if (!state.deletedMembers.includes(name)) state.deletedMembers.push(name);
+    state.projects.forEach(p => {
+      p.mentors = p.mentors.filter(n => n !== name);
+      p.students = p.students.filter(n => n !== name);
+      if (p.groups) p.groups.forEach(g => { g.members = g.members.filter(m => m.name !== name); });
+    });
+    state.departments.forEach(d => {
+      if (d.lead) d.lead = d.lead.filter(m => m.name !== name);
+      if (d.groups) d.groups.forEach(g => {
+        g.members = g.members.filter(m => m.name !== name);
+        if (g.subGroups) g.subGroups.forEach(sg => { sg.members = sg.members.filter(m => m.name !== name); });
+      });
+    });
+    (state.schools||[]).forEach(s => {
+      if (s.tl === name) s.tl = "";
+      if (s.subTl === name) s.subTl = "";
+      s.students = s.students.filter(n => n !== name);
+    });
+    state.onboarding = state.onboarding.filter(n => n !== name);
+    state.unassigned = state.unassigned.filter(n => n !== name);
+    if (state.memberOverrides && state.memberOverrides[name]) delete state.memberOverrides[name];
+    save(); render();
+  });
+}
+function restoreMember(name) {
+  if (!state.deletedMembers) return;
+  state.deletedMembers = state.deletedMembers.filter(n => n !== name);
+  if (!state.members.includes(name) && !MEMBER_INFO[name]) {
+    state.members.push(name);
+  }
+  save(); render();
+}
+function editMember(name) {
+  const current = memberInfo(name) || { university: "", area: "" };
+  const areaOpts = AREA_LIST.map(a => `<option value="${a}"${current.area===a?" selected":""}>${a}</option>`).join("");
+  openModal(`
+    <h3>${escapeHtml(name)} の情報を編集</h3>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">大学名</label>
+    <input id="em-univ" value="${escapeHtml(current.university||"")}" placeholder="例：京都大学"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">エリア</label>
+    <select id="em-area">
+      <option value="">（未設定）</option>
+      ${areaOpts}
+    </select>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">名前</label>
+    <input id="em-name" value="${escapeHtml(name)}" placeholder="名前を変更する場合のみ書き換え"/>
+    <div class="actions">
+      <button class="btn" onclick="closeModal()">キャンセル</button>
+      <button class="btn primary" onclick="saveMemberEdit('${name}')">保存</button>
+    </div>
+  `);
+}
+function saveMemberEdit(oldName) {
+  const univ = (document.getElementById("em-univ").value||"").trim();
+  const area = document.getElementById("em-area").value;
+  const newName = (document.getElementById("em-name").value||"").trim() || oldName;
+  if (!state.memberOverrides) state.memberOverrides = {};
+
+  // 名前変更があれば全アサインの参照も更新
+  if (newName !== oldName) {
+    if (state.memberOverrides[oldName]) {
+      state.memberOverrides[newName] = state.memberOverrides[oldName];
+      delete state.memberOverrides[oldName];
+    }
+    state.members = state.members.map(n => n === oldName ? newName : n);
+    if (!state.members.includes(newName) && !MEMBER_INFO[newName]) state.members.push(newName);
+    state.projects.forEach(p => {
+      p.mentors = p.mentors.map(n => n === oldName ? newName : n);
+      p.students = p.students.map(n => n === oldName ? newName : n);
+      if (p.groups) p.groups.forEach(g => g.members.forEach(m => { if (m.name === oldName) m.name = newName; }));
+    });
+    state.departments.forEach(d => {
+      if (d.lead) d.lead.forEach(m => { if (m.name === oldName) m.name = newName; });
+      if (d.groups) d.groups.forEach(g => {
+        g.members.forEach(m => { if (m.name === oldName) m.name = newName; });
+        if (g.subGroups) g.subGroups.forEach(sg => sg.members.forEach(m => { if (m.name === oldName) m.name = newName; }));
+      });
+    });
+    (state.schools||[]).forEach(s => {
+      if (s.tl === oldName) s.tl = newName;
+      if (s.subTl === oldName) s.subTl = newName;
+      s.students = s.students.map(n => n === oldName ? newName : n);
+    });
+    state.onboarding = state.onboarding.map(n => n === oldName ? newName : n);
+    state.unassigned = state.unassigned.map(n => n === oldName ? newName : n);
+  }
+
+  // 大学・エリアのoverride保存
+  if (!univ && !area) {
+    delete state.memberOverrides[newName];
+  } else {
+    state.memberOverrides[newName] = { university: univ, area: area };
+  }
+  save(); closeModal(); render();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+// ====== 閲覧モードの編集ロック ======
+// CSSで隠すだけでなく、編集系の関数自体を無効化して操作不能にする。
+// 万一ボタンが表示されてもクリックは何も起こらない（完全な読み取り専用）。
+const EDIT_FNS = [
+  "addProject","editProject","saveProject","deleteProject","addToProject","removeFromProject",
+  "addProjectGroup","deleteProjectGroup","renameProjectGroup","addProjectGroupMember",
+  "removeProjectGroupMember","renameProjectGroupMember","editProjectGroupMemberRole",
+  "addDept","renameDept","addDeptLead","removeDeptLead","renameDeptLead","editDeptLeadRole",
+  "addGroup","deleteGroup","renameGroup","addGroupMember","removeGroupMember",
+  "renameGroupMember","editGroupMemberRole",
+  "addSubGroup","deleteSubGroup","renameSubGroup","addSubGroupMember","removeSubGroupMember",
+  "renameSubGroupMember","editSubGroupMemberRole",
+  "addSchool","deleteSchool","setSchoolLead","addSchoolStudent","removeSchoolStudent",
+  "addToList","removeFromList",
+  "addMember","editMember","saveMemberEdit","deleteMember","restoreMember",
+  "resetData",
+];
+if (!isEditMode) {
+  EDIT_FNS.forEach(fn => {
+    if (typeof window[fn] === "function") {
+      window[fn] = function () { /* 閲覧モードでは編集不可 */ };
+    }
+  });
+}
+
+render();
+</script>
+</body>
+</html>
