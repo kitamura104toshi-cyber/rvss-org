@@ -4,8 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>RVSS 組織管理</title>
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   :root {
     --bg: #f7f6f2;
@@ -548,19 +547,11 @@ function onAllAssignChange(v) {
   if (el) el.innerHTML = renderAll();
 }
 
-// ====== Firebase 初期化 ======
-const firebaseConfig = {
-  apiKey: "AIzaSyB7l2Osfh4WzFuMnVAs1EfR-i74C-Hhy6s",
-  authDomain: "rvss-org.firebaseapp.com",
-  projectId: "rvss-org",
-  storageBucket: "rvss-org.firebasestorage.app",
-  messagingSenderId: "701915922312",
-  appId: "1:701915922312:web:6142bc03e734272c56043d",
-  measurementId: "G-GDF4438J7C"
-};
-firebase.initializeApp(firebaseConfig);
-const fdb = firebase.firestore();
-const DOC_REF = fdb.collection("org").doc("main");
+// ====== Supabase 初期化 ======
+const SUPABASE_URL = "__SUPABASE_URL__";
+const SUPABASE_ANON_KEY = "__SUPABASE_ANON_KEY__";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const ROW_ID = "main";
 
 // ====== 編集モード判定（URLパラメータで切り替え） ======
 // 共有URL: https://rvss-org.vercel.app/           → 閲覧モード（誰でも）
@@ -598,15 +589,18 @@ function setStatus(text, color) {
 }
 
 let writeTimer = null;
-function pushToFirestore() {
+function pushToSupabase() {
   // 閲覧モードでは絶対にクラウドDBへ書き込まない（読み取り専用）
   if (!isEditMode) return;
   setStatus("⏳ 同期中…");
   clearTimeout(writeTimer);
   writeTimer = setTimeout(() => {
-    DOC_REF.set({ data: state, updatedAt: Date.now() })
-      .then(() => setStatus("✅ 同期済み", "#2f7d4a"))
-      .catch(e => setStatus("❌ " + e.message, "#b73a4a"));
+    sb.from("org_state")
+      .upsert({ id: ROW_ID, data: state, updated_at: new Date().toISOString() })
+      .then(({ error }) => {
+        if (error) setStatus("❌ " + error.message, "#b73a4a");
+        else setStatus("✅ 同期済み", "#2f7d4a");
+      });
   }, 300);
 }
 
@@ -628,17 +622,11 @@ function load() {
 }
 function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  pushToFirestore();
+  pushToSupabase();
 }
 
-// Firestore リアルタイム購読：他端末・他ユーザーの変更を即反映
-DOC_REF.onSnapshot(snap => {
-  if (!snap.exists) {
-    // 初回：現在のローカル state をクラウドにアップロード
-    pushToFirestore();
-    return;
-  }
-  const remote = snap.data().data;
+// Supabase リアルタイム購読：他端末・他ユーザーの変更を即反映
+function applyRemote(remote) {
   if (!remote) return;
   if (JSON.stringify(remote) === JSON.stringify(state)) {
     setStatus("✅ 同期済み", "#2f7d4a");
@@ -648,9 +636,31 @@ DOC_REF.onSnapshot(snap => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   render();
   setStatus("✅ 同期済み", "#2f7d4a");
-}, err => {
-  setStatus("❌ 接続エラー: " + err.message, "#b73a4a");
-});
+}
+
+// 初回ロード：現在のクラウド側の値を取得
+sb.from("org_state").select("data").eq("id", ROW_ID).maybeSingle()
+  .then(({ data: row, error }) => {
+    if (error) {
+      setStatus("❌ 接続エラー: " + error.message, "#b73a4a");
+      return;
+    }
+    if (!row) {
+      // 初回：現在のローカル state をクラウドにアップロード
+      pushToSupabase();
+      return;
+    }
+    applyRemote(row.data);
+  });
+
+// リアルタイム購読：以降の変更を即反映
+sb.channel("org_state_changes")
+  .on("postgres_changes", { event: "*", schema: "public", table: "org_state", filter: `id=eq.${ROW_ID}` }, payload => {
+    applyRemote(payload.new && payload.new.data);
+  })
+  .subscribe(status => {
+    if (status === "CHANNEL_ERROR") setStatus("❌ 接続エラー", "#b73a4a");
+  });
 function resetData() {
   confirmDialog("初期データに戻します。よろしいですか？", () => {
     state = JSON.parse(JSON.stringify(INITIAL));
