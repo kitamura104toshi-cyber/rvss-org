@@ -1,4 +1,5 @@
 .vercel
+.claude/settings.local.json
 # 移行時の中間作業ファイル（リポジトリには含めない）
 decode_firestore.py
 decoded_data.json
