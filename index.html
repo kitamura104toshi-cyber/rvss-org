@@ -60,6 +60,21 @@
     font-size: 14px;
   }
   .tab.active { background: var(--text); color: white; border-color: var(--text); }
+  .tab-remove {
+    margin-left: 6px;
+    opacity: 0.6;
+  }
+  .tab-remove:hover { opacity: 1; }
+  .tab-add {
+    background: #fff;
+    border: 1px dashed var(--border);
+    color: var(--muted);
+    padding: 8px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .tab-add:hover { background: #f0eee7; }
 
   .grid {
     column-count: 2;
@@ -548,8 +563,18 @@ function onAllAssignChange(v) {
 }
 
 // ====== Supabase 初期化 ======
-const SUPABASE_URL = "https://dbrwsrrfmpnvpzxcdupp.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRicndzcnJmbXBudnB6eGNkdXBwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyNjQyNjAsImV4cCI6MjA5ODg0MDI2MH0.vhD6bvl8qzgBK5T_k9PgkxJCVUwieLSa2kFnUgdpaCs";
+// localhost/127.0.0.1 で開いた場合は開発用プロジェクト、それ以外（本番デプロイ先）は本番プロジェクトに自動で接続する。
+// これにより「本番用キーへの戻し忘れ」による事故を防ぐ。
+const IS_LOCAL_DEV = ["localhost", "127.0.0.1"].includes(location.hostname);
+
+const PROD_SUPABASE_URL = "https://uilequglcrsenknzwmky.supabase.co";
+const PROD_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVpbGVxdWdsY3JzZW5rbnp3bWt5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwNzU0MzgsImV4cCI6MjA5ODY1MTQzOH0.kzqb8trPTbrFx_Jc_iwRAPN9nzxYahYuK2Vxkro__ro";
+
+const DEV_SUPABASE_URL = "https://dbrwsrrfmpnvpzxcdupp.supabase.co";
+const DEV_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRicndzcnJmbXBudnB6eGNkdXBwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyNjQyNjAsImV4cCI6MjA5ODg0MDI2MH0.vhD6bvl8qzgBK5T_k9PgkxJCVUwieLSa2kFnUgdpaCs";
+
+const SUPABASE_URL = IS_LOCAL_DEV ? DEV_SUPABASE_URL : PROD_SUPABASE_URL;
+const SUPABASE_ANON_KEY = IS_LOCAL_DEV ? DEV_SUPABASE_ANON_KEY : PROD_SUPABASE_ANON_KEY;
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const ROW_ID = "main";
 
@@ -611,6 +636,7 @@ let state = load();
 function ensureFields(s) {
   if (!s.deletedMembers) s.deletedMembers = [];
   if (!s.memberOverrides) s.memberOverrides = {};
+  if (!s.customTabs) s.customTabs = [];
   return s;
 }
 function load() {
@@ -677,13 +703,17 @@ function exportJSON() {
 
 // ====== タブ ======
 let currentTab = "projects";
-const TABS = [
+const BASE_TABS = [
   { id: "projects", label: "プロジェクト" },
   { id: "community", label: "コミュニティ運営" },
   { id: "schools", label: "スクール受講者" },
-  { id: "onbo", label: "オンボ / 未アサイン" },
+  { id: "onbo", label: "オンボーディング" },
+  { id: "unassigned", label: "未アサイン" },
   { id: "all", label: "全メンバー" },
 ];
+function getTabs() {
+  return BASE_TABS.concat(state.customTabs.map(t => ({ id: t.id, label: t.label, custom: true })));
+}
 
 // ====== 集計 ======
 function allAssignedNames() {
@@ -746,11 +776,33 @@ function renderStats() {
 }
 
 function renderTabs() {
-  document.getElementById("tabs").innerHTML = TABS.map(t =>
-    `<div class="tab ${currentTab===t.id?'active':''}" onclick="setTab('${t.id}')">${t.label}</div>`
-  ).join("");
+  const tabsHtml = getTabs().map(t => `
+    <div class="tab ${currentTab===t.id?'active':''}" onclick="setTab('${t.id}')">
+      ${escapeHtml(t.label)}${t.custom ? `<button class="icon-btn tab-remove editor-only" onclick="deleteCustomTab(event,'${t.id}')" title="タブを削除">×</button>` : ""}
+    </div>
+  `).join("");
+  document.getElementById("tabs").innerHTML = tabsHtml +
+    `<button class="tab-add editor-only" onclick="addCustomTab()">+ タブを追加</button>`;
 }
 function setTab(id) { currentTab = id; render(); }
+
+function addCustomTab() {
+  inputDialog("新しいタブ名", "", (name) => {
+    if (!name || !name.trim()) return;
+    const id = "custom_" + Date.now();
+    state.customTabs.push({ id, label: name.trim() });
+    currentTab = id;
+    save(); render();
+  });
+}
+function deleteCustomTab(event, id) {
+  event.stopPropagation();
+  confirmDialog("このタブを削除します。よろしいですか？", () => {
+    state.customTabs = state.customTabs.filter(t => t.id !== id);
+    if (currentTab === id) currentTab = "all";
+    save(); render();
+  });
+}
 
 function renderContent() {
   const el = document.getElementById("content");
@@ -766,13 +818,20 @@ function renderContent() {
     tb.innerHTML = `<button class="btn primary editor-only" onclick="addSchool()">+ スクールを追加</button>`;
     el.innerHTML = `<div class="grid">${state.schools.map(renderSchool).join("")}</div>`;
   } else if (currentTab === "onbo") {
-    el.innerHTML = renderOnbo();
+    el.innerHTML = renderOnboCard();
+  } else if (currentTab === "unassigned") {
+    el.innerHTML = renderUnassignedCard();
   } else if (currentTab === "all") {
     tb.innerHTML = `
       <input class="search" id="search" placeholder="メンバー検索…" value="${escapeHtml(allFilterSearch)}" oninput="onAllSearchInput(this.value)" style="min-width:200px"/>
       <button class="btn primary editor-only" onclick="addMember()" style="margin-left:6px">+ メンバーを追加</button>
     `;
     el.innerHTML = renderAll();
+  } else {
+    const customTab = state.customTabs.find(t => t.id === currentTab);
+    el.innerHTML = customTab
+      ? `<div class="card">「${escapeHtml(customTab.label)}」タブの内容はまだ準備中です。</div>`
+      : "";
   }
 }
 
@@ -968,9 +1027,9 @@ function removeSchoolStudent(i, name) {
   save(); render();
 }
 
-function renderOnbo() {
+function renderOnboCard() {
   return `
-    <div class="card" style="margin-bottom:16px">
+    <div class="card">
       <div class="card-head"><div class="card-title">オンボーディング中</div>
         <button class="btn editor-only" onclick="addToList('onboarding')">+ 追加</button></div>
       <div class="unassigned-list">
@@ -978,6 +1037,10 @@ function renderOnbo() {
       </div>
       <div class="warn">オンボ期間：1ヶ月。終了後にプロジェクト or コミュニティ運営へ移行。</div>
     </div>
+  `;
+}
+function renderUnassignedCard() {
+  return `
     <div class="card">
       <div class="card-head"><div class="card-title">未アサイン</div>
         <button class="btn editor-only" onclick="addToList('unassigned')">+ 追加</button></div>
