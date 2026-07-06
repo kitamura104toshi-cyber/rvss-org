@@ -1524,7 +1524,18 @@ function renderAll() {
     .filter(([n, info]) => !assignDef || assignDef.test(info))
     .sort(([a],[b]) => a.localeCompare(b,"ja"));
 
-  const cards = filtered.map(([n,info]) => renderMemberCard(n, info)).join("");
+  // BSメンバー（学生メンバーではないため別枠にする）
+  const isBSName = (n) => !!(memberInfo(n) || {}).isBS;
+  const regularFiltered = filtered.filter(([n]) => !isBSName(n));
+  const bsFiltered = filtered.filter(([n]) => isBSName(n));
+
+  const cards = regularFiltered.map(([n,info]) => renderMemberCard(n, info)).join("");
+  const bsSection = bsFiltered.length > 0 ? `
+    <div style="margin-top:24px;padding-top:16px;border-top:1px dashed var(--border)">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">BSメンバー（${bsFiltered.length}名）</div>
+      <div class="grid">${bsFiltered.map(([n,info]) => renderMemberCard(n, info)).join("")}</div>
+    </div>
+  ` : "";
 
   // 削除済みメンバー（復元可能）
   const deletedList = (state.deletedMembers || []);
@@ -1553,6 +1564,7 @@ function renderAll() {
       </div>
     </div>
     ${cards ? `<div class="grid">${cards}</div>` : '<div class="warn">該当メンバーがいません</div>'}
+    ${bsSection}
     ${deletedSection}
   `;
 }
@@ -1566,7 +1578,7 @@ function renderMemberCard(n, info) {
   return `
     <div class="card">
       <div class="card-head">
-        <div class="card-title">${escapeHtml(n)}</div>
+        <div class="card-title">${escapeHtml(n)}${mi.isBS ? ` <span class="tag" style="background:#2a2a2a;color:#fff;font-size:11px;vertical-align:middle">BS</span>` : ""}</div>
         <div style="display:flex;gap:4px;align-items:center">
           <button class="btn editor-only" onclick="editMember('${n}')" style="font-size:11px;padding:4px 10px">編集</button>
           <button class="btn editor-only" onclick="deleteMember('${n}')" title="退会扱いにする（全アサインから除外）" style="font-size:11px;padding:4px 10px;color:var(--pink-text)">退会</button>
@@ -2000,12 +2012,13 @@ function saveMemberEdit(oldName) {
     state.unassigned = state.unassigned.map(n => n === oldName ? newName : n);
   }
 
-  // プロフィール情報のoverride保存（契約状況は編集フォーム対象外なので保持する）
+  // プロフィール情報のoverride保存（契約状況・BSバッジは編集フォーム対象外なので保持する）
   const contractSigned = (state.memberOverrides[newName] || {}).contractSigned;
-  if (!univ && !area && !experience && !skills && !canDo && !wantToDo && !contractSigned) {
+  const isBS = (state.memberOverrides[newName] || {}).isBS;
+  if (!univ && !area && !experience && !skills && !canDo && !wantToDo && !contractSigned && !isBS) {
     delete state.memberOverrides[newName];
   } else {
-    state.memberOverrides[newName] = { university: univ, area: area, experience, skills, canDo, wantToDo, contractSigned };
+    state.memberOverrides[newName] = { university: univ, area: area, experience, skills, canDo, wantToDo, contractSigned, isBS };
   }
   save(); closeModal(); render();
 }
