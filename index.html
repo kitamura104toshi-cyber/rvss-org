@@ -1443,6 +1443,11 @@ function renderMemberCard(n, info) {
           <button class="btn editor-only" onclick="deleteMember('${n}')" title="退会扱いにする（全アサインから除外）" style="font-size:11px;padding:4px 10px;color:var(--pink-text)">退会</button>
         </div>
       </div>
+      <div style="margin-bottom:10px">
+        ${mi.contractSigned
+          ? `<span class="tag editable" style="background:var(--green,#e6f4ea);color:var(--green-text,#2f7d4a)" onclick="toggleContractSigned('${n}')" title="クリックで未契約に戻す">✅ 契約済み</span>`
+          : `<span class="tag editable" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc" onclick="toggleContractSigned('${n}')" title="クリックで契約済みにする">未契約</span>`}
+      </div>
       <div style="line-height:1.8;margin-bottom:12px">
         ${mi.university ? univTagHTML(mi.university) : ""}
         ${mi.area ? areaTagHTML(mi.area) : ""}
@@ -1845,6 +1850,16 @@ function restoreMember(name) {
   }
   save(); render();
 }
+function toggleContractSigned(name) {
+  const current = memberInfo(name) || {};
+  if (!state.memberOverrides) state.memberOverrides = {};
+  state.memberOverrides[name] = Object.assign(
+    { university: "", area: "", experience: "", skills: "", canDo: "", wantToDo: "" },
+    current,
+    { contractSigned: !current.contractSigned }
+  );
+  save(); render();
+}
 function editMember(name) {
   const current = memberInfo(name) || { university: "", area: "" };
   const areaOpts = AREA_LIST.map(a => `<option value="${a}"${current.area===a?" selected":""}>${a}</option>`).join("");
@@ -1912,11 +1927,12 @@ function saveMemberEdit(oldName) {
     state.unassigned = state.unassigned.map(n => n === oldName ? newName : n);
   }
 
-  // プロフィール情報のoverride保存
-  if (!univ && !area && !experience && !skills && !canDo && !wantToDo) {
+  // プロフィール情報のoverride保存（契約状況は編集フォーム対象外なので保持する）
+  const contractSigned = (state.memberOverrides[newName] || {}).contractSigned;
+  if (!univ && !area && !experience && !skills && !canDo && !wantToDo && !contractSigned) {
     delete state.memberOverrides[newName];
   } else {
-    state.memberOverrides[newName] = { university: univ, area: area, experience, skills, canDo, wantToDo };
+    state.memberOverrides[newName] = { university: univ, area: area, experience, skills, canDo, wantToDo, contractSigned };
   }
   save(); closeModal(); render();
 }
