@@ -33,7 +33,7 @@
     color: var(--text);
     -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 24px; }
   h1 { font-size: 22px; margin: 0 0 16px; }
   .stats {
     display: grid;
@@ -203,6 +203,19 @@
     font-size: 13px;
   }
   .btn-add:hover { background: #f0eee7; }
+
+  .kpi-depts { display: flex; flex-direction: column; gap: 16px; }
+  .kpi-groups-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    align-items: start;
+  }
+  .kpi-groups-grid > .group-box,
+  .kpi-groups-grid > .subgroup-box { margin-top: 0; }
+  @media (max-width: 720px) {
+    .kpi-groups-grid { grid-template-columns: 1fr; }
+  }
 
   .group-box {
     border: 1px solid var(--border);
@@ -452,6 +465,65 @@ const INITIAL = {
   unassigned: [],
 };
 
+// ====== KPI責任範囲・担当者マップの初期データ ======
+// 部署（department）の下は「グループ」を無制限に入れ子にできる再帰構造。
+// 各グループノード = { name, members:[{name,role}], children:[グループノード...] }
+const KPI_DEPTS_SEED = [
+  { name: "組織の人数", lead: [{ name: "佐々木", role: "統括" }, { name: "本田", role: "補佐" }], groups: [
+    { name: "採用人数", members: [{ name: "佐々木", role: "統括" }], children: [
+      { name: "広報", members: [{ name: "久次米", role: "" }], children: [] },
+      { name: "企画", members: [{ name: "くずお", role: "" }], children: [] },
+      { name: "採用", members: [{ name: "芹澤", role: "" }], children: [] },
+    ]},
+    { name: "継続率", members: [{ name: "小笹", role: "" }], children: [] },
+  ]},
+  { name: "メンバー平均レベル", lead: [{ name: "太田", role: "" }, { name: "杉本", role: "" }], groups: [
+    { name: "マインドセット", members: [{ name: "山口", role: "360度評価の平均スコア（マインド/ビジネス基礎スキル）" }], children: [] },
+    { name: "AI+ / CREATOR'ZZ", members: [], children: [] },
+    { name: "環境", members: [{ name: "エブラヒミ", role: "統括" }], children: [
+      { name: "アサイン", members: [{ name: "北村", role: "" }], children: [] },
+      { name: "インプット", members: [{ name: "平山", role: "" }], children: [
+        { name: "基礎カリキュラム", members: [{ name: "エブラヒミ", role: "育成" }], children: [] },
+        { name: "オフライン勉強会", members: [{ name: "西原", role: "支部" }], children: [] },
+      ]},
+      { name: "アウトプット", members: [{ name: "藤原", role: "" }], children: [
+        { name: "プロジェクト", members: [
+          { name: "藤原", role: "統括" },
+          { name: "NoBorder", role: "" },
+          { name: "RVC", role: "" },
+          { name: "AIスクール", role: "" },
+          { name: "かにを", role: "" },
+          { name: "高校", role: "" },
+          { name: "カンファレンス", role: "" },
+          { name: "農業", role: "" },
+          { name: "CFO室", role: "" },
+        ], children: [] },
+        { name: "組織運営", members: [
+          { name: "平良", role: "情シス" },
+          { name: "尾関", role: "スクール" },
+        ], children: [] },
+      ]},
+      { name: "支部（オフライン）", members: [
+        { name: "松本", role: "関東" },
+        { name: "平井", role: "関西" },
+        { name: "平山", role: "東北" },
+        { name: "井上", role: "中部" },
+      ], children: [] },
+      { name: "土曜定例クオリティ", members: [
+        { name: "オコエさん", role: "ゲスト招待" },
+        { name: "山口", role: "ゲスト招待" },
+        { name: "山口", role: "発表クオリティ" },
+      ], children: [] },
+    ]},
+    { name: "コミットメント", members: [{ name: "小笹", role: "統括" }], children: [
+      { name: "土曜定例出席率", members: [{ name: "小笹", role: "人事" }], children: [] },
+      { name: "月稼働時間", members: [{ name: "小笹", role: "人事" }], children: [
+        { name: "計測", members: [{ name: "各部署PM", role: "" }], children: [] },
+      ]},
+    ]},
+  ]},
+];
+
 // ====== メンバーの大学・エリア情報（Google Sheetsより） ======
 const MEMBER_INFO = {
   "佐々木晴也":   { university: "京都大学",             area: "関西" },
@@ -638,6 +710,7 @@ function ensureFields(s) {
   if (!s.deletedMembers) s.deletedMembers = [];
   if (!s.memberOverrides) s.memberOverrides = {};
   if (!s.customTabs) s.customTabs = [];
+  if (!s.kpiDepts) s.kpiDepts = JSON.parse(JSON.stringify(KPI_DEPTS_SEED));
   return s;
 }
 function load() {
@@ -689,10 +762,16 @@ sb.channel("org_state_changes")
     if (status === "CHANNEL_ERROR") setStatus("❌ 接続エラー", "#b73a4a");
   });
 function resetData() {
-  confirmDialog("初期データに戻します。よろしいですか？", () => {
-    state = JSON.parse(JSON.stringify(INITIAL));
-    save(); render();
-  });
+  inputDialog(
+    "初期データに戻します。現在のデータは自動でバックアップされます。続行するには「初期化」と入力してください。",
+    "",
+    (v) => {
+      if (v !== "初期化") { alert("入力が「初期化」と一致しなかったため中止しました。"); return; }
+      exportJSON(); // 上書き前の自動バックアップ
+      state = ensureFields(JSON.parse(JSON.stringify(INITIAL)));
+      save(); render();
+    }
+  );
 }
 function exportJSON() {
   const blob = new Blob([JSON.stringify(state, null, 2)], {type:"application/json"});
@@ -711,6 +790,7 @@ const BASE_TABS = [
   { id: "onbo", label: "オンボーディング" },
   { id: "unassigned", label: "未アサイン" },
   { id: "all", label: "全メンバー" },
+  { id: "kpi", label: "KPI管理者" },
 ];
 function getTabs() {
   return BASE_TABS.concat(state.customTabs.map(t => ({ id: t.id, label: t.label, custom: true })));
@@ -828,6 +908,9 @@ function renderContent() {
       <button class="btn primary editor-only" onclick="addMember()" style="margin-left:6px">+ メンバーを追加</button>
     `;
     el.innerHTML = renderAll();
+  } else if (currentTab === "kpi") {
+    tb.innerHTML = `<button class="btn primary editor-only" onclick="addKpiDept()">+ 部署を追加</button>`;
+    el.innerHTML = `<div class="kpi-depts">${state.kpiDepts.map(renderKpiDept).join("")}</div>`;
   } else {
     const customTab = state.customTabs.find(t => t.id === currentTab);
     el.innerHTML = customTab
@@ -1050,6 +1133,183 @@ function renderUnassignedCard() {
       </div>
     </div>
   `;
+}
+
+// ====== KPI責任範囲・担当者マップ ======
+// 部署カードの見た目は「コミュニティ運営」タブと同じ group-box/subgroup-box を流用しつつ、
+// グループは無制限に入れ子にできる再帰構造にしている（環境>インプット>基礎カリキュラム のようにいくらでも深くできる）。
+// 担当者は正式なメンバー名簿に限らないため、pickMember ではなく自由入力にしている。
+// pathはKPI部署 d.groups をルートとした子インデックスの配列（例：[2,1,0]）
+function getKpiGroupNode(dept, path) {
+  let node = { children: dept.groups };
+  for (const i of path) node = node.children[i];
+  return node;
+}
+function getKpiGroupParentArray(dept, path) {
+  let arr = dept.groups;
+  for (let i = 0; i < path.length - 1; i++) arr = arr[path[i]].children;
+  return arr;
+}
+function kpiDeptTotal(d) {
+  const lead = (d.lead||[]).length;
+  const countNode = (n) => (n.members||[]).length + (n.children||[]).reduce((s,c)=>s+countNode(c),0);
+  return lead + (d.groups||[]).reduce((s,g)=>s+countNode(g), 0);
+}
+function renderKpiDept(d, i) {
+  const leadRows = (d.lead||[]).map((m, li) => `
+    <div class="slot">
+      <div><div class="name" onclick="renameKpiDeptLead(${i},${li})" title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="tag editable" onclick="editKpiDeptLeadRole(${i},${li})" title="クリックでタグ変更">${escapeHtml(m.role)}</span>
+        <button class="icon-btn editor-only" onclick="removeKpiDeptLead(${i},${li})">×</button>
+      </div>
+    </div>
+  `).join("");
+
+  const groupBlocks = (d.groups||[]).map((g, gi) => renderKpiGroupNode(g, i, [gi], 0)).join("");
+
+  return `
+    <div class="card dept-card">
+      <div class="card-head">
+        <div class="card-title" onclick="renameKpiDept(${i})" title="クリックで部署名変更" style="cursor:pointer">${escapeHtml(d.name)}</div>
+        <span class="count-pill">${kpiDeptTotal(d)}名</span>
+      </div>
+      ${leadRows}
+      <button class="btn-add editor-only" onclick="addKpiDeptLead(${i})">+ 統括などを追加</button>
+      <div class="kpi-groups-grid" style="margin-top:12px">${groupBlocks}</div>
+      <button class="btn-add editor-only" onclick="addKpiGroup(${i})" style="margin-top:12px;border-style:solid;background:var(--accent-soft);color:var(--accent)">+ グループを追加</button>
+    </div>
+  `;
+}
+function renderKpiGroupNode(node, deptIdx, path, depth) {
+  const pathStr = JSON.stringify(path);
+  const boxClass = depth === 0 ? "group-box" : "subgroup-box";
+  const titleClass = depth === 0 ? "group-title" : "subgroup-title";
+  const memberRows = (node.members||[]).map((m, mi) => `
+    <div class="slot">
+      <div><div class="name" onclick='renameKpiGroupNodeMember(${deptIdx},${pathStr},${mi})' title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="tag editable" onclick='editKpiGroupNodeMemberRole(${deptIdx},${pathStr},${mi})' title="クリックでタグ変更">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
+        <button class="icon-btn editor-only" onclick='removeKpiGroupNodeMember(${deptIdx},${pathStr},${mi})'>×</button>
+      </div>
+    </div>
+  `).join("");
+  const childBlocks = (node.children||[]).map((c, ci) => renderKpiGroupNode(c, deptIdx, [...path, ci], depth+1)).join("");
+  return `
+    <div class="${boxClass}">
+      <div class="group-head">
+        <div class="${titleClass}" onclick='renameKpiGroupNode(${deptIdx},${pathStr})' title="クリックで名前変更" style="cursor:pointer">${escapeHtml(node.name)}</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="count-pill">${(node.members||[]).length}名</span>
+          <button class="icon-btn editor-only" onclick='deleteKpiGroupNode(${deptIdx},${pathStr})' title="削除">×</button>
+        </div>
+      </div>
+      ${memberRows}
+      <button class="btn-add editor-only" onclick='addKpiGroupNodeMember(${deptIdx},${pathStr})'>+ 担当者を追加</button>
+      ${childBlocks}
+      <button class="btn-add editor-only" onclick='addKpiGroupNodeChild(${deptIdx},${pathStr})' style="margin-top:8px;border-style:solid;background:#f0eee7">+ 小グループを追加</button>
+    </div>
+  `;
+}
+function addKpiDept() {
+  inputDialog("部署名（KPIの責任範囲名）", "", (name) => {
+    if (!name || !name.trim()) return;
+    state.kpiDepts.push({ name: name.trim(), lead: [], groups: [] });
+    save(); render();
+  });
+}
+function renameKpiDept(idx) {
+  inputDialog("部署名を変更", state.kpiDepts[idx].name, (v) => {
+    if (!v.trim()) return;
+    state.kpiDepts[idx].name = v.trim();
+    save(); render();
+  });
+}
+function addKpiDeptLead(idx) {
+  inputDialog("役割（例：統括、補佐）", "統括", (role) => {
+    inputDialog("担当者名", "", (name) => {
+      if (!name || !name.trim()) return;
+      state.kpiDepts[idx].lead.push({ name: name.trim(), role: role || "統括" });
+      save(); render();
+    });
+  });
+}
+function removeKpiDeptLead(idx, li) {
+  state.kpiDepts[idx].lead.splice(li,1); save(); render();
+}
+function editKpiDeptLeadRole(idx, li) {
+  inputDialog("タグを編集", state.kpiDepts[idx].lead[li].role, (v) => {
+    state.kpiDepts[idx].lead[li].role = v;
+    save(); render();
+  });
+}
+function renameKpiDeptLead(idx, li) {
+  inputDialog("担当者名を変更", state.kpiDepts[idx].lead[li].name, (v) => {
+    if (!v.trim()) return;
+    state.kpiDepts[idx].lead[li].name = v.trim();
+    save(); render();
+  });
+}
+function addKpiGroup(idx) {
+  inputDialog("グループ名（例：インプット、採用人数）", "", (name) => {
+    if (!name) return;
+    state.kpiDepts[idx].groups.push({ name, members: [], children: [] });
+    save(); render();
+  });
+}
+function renameKpiGroupNode(deptIdx, path) {
+  const node = getKpiGroupNode(state.kpiDepts[deptIdx], path);
+  inputDialog("名称を変更", node.name, (v) => {
+    if (!v.trim()) return;
+    node.name = v.trim();
+    save(); render();
+  });
+}
+function deleteKpiGroupNode(deptIdx, path) {
+  confirmDialog("このグループ（中の小グループも含む）を削除しますか？", () => {
+    const dept = state.kpiDepts[deptIdx];
+    const arr = getKpiGroupParentArray(dept, path);
+    arr.splice(path[path.length-1], 1);
+    save(); render();
+  });
+}
+function addKpiGroupNodeMember(deptIdx, path) {
+  inputDialog("役割（任意。空欄で担当者のみ）", "", (role) => {
+    inputDialog("担当者名", "", (name) => {
+      if (!name || !name.trim()) return;
+      const node = getKpiGroupNode(state.kpiDepts[deptIdx], path);
+      node.members.push({ name: name.trim(), role });
+      save(); render();
+    });
+  });
+}
+function removeKpiGroupNodeMember(deptIdx, path, mi) {
+  getKpiGroupNode(state.kpiDepts[deptIdx], path).members.splice(mi, 1);
+  save(); render();
+}
+function editKpiGroupNodeMemberRole(deptIdx, path, mi) {
+  const node = getKpiGroupNode(state.kpiDepts[deptIdx], path);
+  inputDialog("タグを編集（空でタグなし）", node.members[mi].role || "", (v) => {
+    node.members[mi].role = v;
+    save(); render();
+  });
+}
+function renameKpiGroupNodeMember(deptIdx, path, mi) {
+  const node = getKpiGroupNode(state.kpiDepts[deptIdx], path);
+  inputDialog("担当者名を変更", node.members[mi].name, (v) => {
+    if (!v.trim()) return;
+    node.members[mi].name = v.trim();
+    save(); render();
+  });
+}
+function addKpiGroupNodeChild(deptIdx, path) {
+  inputDialog("小グループ名（例：プロジェクト、基礎カリキュラム）", "", (name) => {
+    if (!name) return;
+    const node = getKpiGroupNode(state.kpiDepts[deptIdx], path);
+    if (!node.children) node.children = [];
+    node.children.push({ name, members: [], children: [] });
+    save(); render();
+  });
 }
 
 // 全メンバーごとに「プロジェクト/コミュニティ運営/スクール/オンボ/未アサイン」を集計したマップを返す
