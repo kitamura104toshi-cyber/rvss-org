@@ -722,11 +722,18 @@ function pushToSupabase() {
 const STORAGE_KEY = "rvss-org-v1";
 let state = load();
 
+function normalizeMemberList(list) {
+  return (list || []).map(item => typeof item === "string" ? { name: item, role: "" } : item);
+}
 function ensureFields(s) {
   if (!s.deletedMembers) s.deletedMembers = [];
   if (!s.memberOverrides) s.memberOverrides = {};
   if (!s.customTabs) s.customTabs = [];
   if (!s.kpiDepts) s.kpiDepts = JSON.parse(JSON.stringify(KPI_DEPTS_SEED));
+  (s.projects || []).forEach(p => {
+    p.mentors = normalizeMemberList(p.mentors);
+    p.students = normalizeMemberList(p.students);
+  });
   return s;
 }
 function load() {
@@ -816,14 +823,14 @@ function getTabs() {
 function allAssignedNames() {
   const set = new Set();
   state.projects.forEach(p => {
-    (p.mentors||[]).forEach(n => set.add(n));
-    (p.students||[]).forEach(n => set.add(n));
+    (p.mentors||[]).forEach(m => set.add(m.name));
+    (p.students||[]).forEach(m => set.add(m.name));
   });
   return set;
 }
 function getStats() {
   const pjAssigned = new Set();
-  state.projects.forEach(p => (p.students||[]).forEach(n => pjAssigned.add(n)));
+  state.projects.forEach(p => (p.students||[]).forEach(m => pjAssigned.add(m.name)));
   const communityNames = new Set();
   state.departments.forEach(d => {
     (d.lead||[]).forEach(m => communityNames.add(m.name));
@@ -949,9 +956,9 @@ function renderProject(p, i) {
       </div>
       ${(g.members||[]).map((m, mi) => `
         <div class="slot" ${reorderData({type:"projectGroupMembers", pi:i, gi}, mi)}>
-          <div><div class="name" onclick="renameProjectGroupMember(${i},${gi},${mi})" title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+          <div><div class="name" onclick='editSlotMember({type:"projectGroupMembers",pi:${i},gi:${gi}},${mi})' title="クリックで編集" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
           <div style="display:flex;align-items:center;gap:6px">
-            <span class="tag editable" onclick="editProjectGroupMemberRole(${i},${gi},${mi})" title="クリックでタグ変更">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
+            <span class="tag editable" onclick='editSlotMember({type:"projectGroupMembers",pi:${i},gi:${gi}},${mi})' title="クリックで編集">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
             <button class="icon-btn editor-only" onclick="removeProjectGroupMember(${i},${gi},${mi})">×</button>
           </div>
         </div>
@@ -969,10 +976,10 @@ function renderProject(p, i) {
         </div>
       </div>
       <div class="section-label">メンター</div>
-      ${(p.mentors||[]).map((n,mi) => slot(n, "", () => `removeFromProject(${i},'mentors','${n}')`, null, {type:"projectMentors", pi:i}, mi)).join("") ||
+      ${(p.mentors||[]).map((m,mi) => slot(m.name, m.role, () => `removeFromProject(${i},'mentors','${m.name}')`, {type:"projectMentors", pi:i}, mi)).join("") ||
         `<div class="slot empty editor-only" onclick="addToProject(${i},'mentors')">+ メンターを設定</div>`}
       <div class="section-label">学生（原則${cap}名）</div>
-      ${(p.students||[]).map((n,mi) => slot(n, "学生", () => `removeFromProject(${i},'students','${n}')`, "PJアサイン", {type:"projectStudents", pi:i}, mi)).join("")}
+      ${(p.students||[]).map((m,mi) => slot(m.name, m.role, () => `removeFromProject(${i},'students','${m.name}')`, {type:"projectStudents", pi:i}, mi)).join("")}
       ${p.students.length < cap ? `<div class="slot empty editor-only" onclick="addToProject(${i},'students')">+ 学生を追加</div>` : ""}
       <button class="btn-add editor-only" onclick="addToProject(${i},'students',true)">+ 追加枠</button>
       ${groupBlocks}
@@ -981,14 +988,14 @@ function renderProject(p, i) {
   `;
 }
 
-function slot(name, role, removeFn, tag, reorderRef, reorderIdx) {
+function slot(name, role, removeFn, reorderRef, reorderIdx) {
+  const editAttr = reorderRef ? `onclick='editSlotMember(${JSON.stringify(reorderRef)},${reorderIdx})' style="cursor:pointer" title="クリックで編集"` : "";
   return `<div class="slot" ${reorderRef ? reorderData(reorderRef, reorderIdx) : ""}>
     <div>
-      <div class="name">${escapeHtml(name)}</div>
-      ${role ? `<div class="role">${escapeHtml(role)}</div>` : ""}
+      <div class="name" ${editAttr}>${escapeHtml(name)}</div>
+      <span class="tag editable" ${editAttr}>${role ? escapeHtml(role) : "＋タグ"}</span>
     </div>
     <div style="display:flex;align-items:center;gap:6px">
-      ${tag ? `<span class="tag pj">${tag}</span>` : ""}
       <button class="icon-btn editor-only" onclick="${removeFn()}">×</button>
     </div>
   </div>`;
@@ -1019,6 +1026,38 @@ function reorderItem(ref, fromIndex, toIndex) {
   const [item] = arr.splice(fromIndex, 1);
   arr.splice(toIndex, 0, item);
   save(); render();
+}
+// 名前クリックで「名前＋タグ」を一括編集するモーダル（部署/KPI/プロジェクトの担当者すべて共通）
+function editSlotMember(ref, idx) {
+  const arr = getReorderableArray(ref);
+  if (!arr) return;
+  const item = arr[idx];
+  const name = typeof item === "string" ? item : item.name;
+  const role = typeof item === "string" ? "" : (item.role || "");
+  window.__editSlotRef = ref;
+  window.__editSlotIdx = idx;
+  openModal(`
+    <h3>担当者を編集</h3>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">名前</label>
+    <input id="sm-name" value="${escapeHtml(name)}"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">タグ（統括・TL・PJアサインなど。空欄でタグなし）</label>
+    <input id="sm-role" value="${escapeHtml(role)}"/>
+    <div class="actions">
+      <button class="btn" onclick="closeModal()">キャンセル</button>
+      <button class="btn primary" onclick="saveSlotMember()">保存</button>
+    </div>
+  `);
+}
+function saveSlotMember() {
+  const ref = window.__editSlotRef;
+  const idx = window.__editSlotIdx;
+  const arr = getReorderableArray(ref);
+  const newName = (document.getElementById("sm-name").value || "").trim();
+  const newRole = (document.getElementById("sm-role").value || "").trim();
+  if (!arr || !newName) { closeModal(); return; }
+  arr[idx] = { name: newName, role: newRole };
+  if (!state.members.includes(newName)) state.members.push(newName);
+  save(); closeModal(); render();
 }
 (function setupReorderDrag() {
   const LONG_PRESS_MS = 350;
@@ -1105,9 +1144,9 @@ function deptTotal(d) {
 function renderDept(d, i) {
   const leadRows = (d.lead||[]).map((m, li) => `
     <div class="slot" ${reorderData({type:"deptLead", di:i}, li)}>
-      <div><div class="name" onclick="renameDeptLead(${i},${li})" title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+      <div><div class="name" onclick='editSlotMember({type:"deptLead",di:${i}},${li})' title="クリックで編集" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
       <div style="display:flex;align-items:center;gap:6px">
-        <span class="tag editable" onclick="editDeptLeadRole(${i},${li})" title="クリックでタグ変更">${escapeHtml(m.role)}</span>
+        <span class="tag editable" onclick='editSlotMember({type:"deptLead",di:${i}},${li})' title="クリックで編集">${escapeHtml(m.role)}</span>
         <button class="icon-btn editor-only" onclick="removeDeptLead(${i},${li})">×</button>
       </div>
     </div>
@@ -1124,9 +1163,9 @@ function renderDept(d, i) {
       </div>
       ${g.members.map((m, mi) => `
         <div class="slot" ${reorderData({type:"deptGroupMembers", di:i, gi}, mi)}>
-          <div><div class="name" onclick="renameGroupMember(${i},${gi},${mi})" title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+          <div><div class="name" onclick='editSlotMember({type:"deptGroupMembers",di:${i},gi:${gi}},${mi})' title="クリックで編集" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
           <div style="display:flex;align-items:center;gap:6px">
-            <span class="tag editable" onclick="editGroupMemberRole(${i},${gi},${mi})" title="クリックでタグ変更">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
+            <span class="tag editable" onclick='editSlotMember({type:"deptGroupMembers",di:${i},gi:${gi}},${mi})' title="クリックで編集">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
             <button class="icon-btn editor-only" onclick="removeGroupMember(${i},${gi},${mi})">×</button>
           </div>
         </div>
@@ -1143,9 +1182,9 @@ function renderDept(d, i) {
           </div>
           ${sg.members.map((m, mi) => `
             <div class="slot" ${reorderData({type:"deptSubGroupMembers", di:i, gi, sgi}, mi)}>
-              <div><div class="name" onclick="renameSubGroupMember(${i},${gi},${sgi},${mi})" style="cursor:pointer" title="クリックで名前変更">${escapeHtml(m.name)}</div></div>
+              <div><div class="name" onclick='editSlotMember({type:"deptSubGroupMembers",di:${i},gi:${gi},sgi:${sgi}},${mi})' title="クリックで編集" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
               <div style="display:flex;align-items:center;gap:6px">
-                <span class="tag editable" onclick="editSubGroupMemberRole(${i},${gi},${sgi},${mi})" title="クリックでタグ変更">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
+                <span class="tag editable" onclick='editSlotMember({type:"deptSubGroupMembers",di:${i},gi:${gi},sgi:${sgi}},${mi})' title="クリックで編集">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
                 <button class="icon-btn editor-only" onclick="removeSubGroupMember(${i},${gi},${sgi},${mi})">×</button>
               </div>
             </div>
@@ -1276,9 +1315,9 @@ function kpiDeptTotal(d) {
 function renderKpiDept(d, i) {
   const leadRows = (d.lead||[]).map((m, li) => `
     <div class="slot" ${reorderData({type:"kpiDeptLead", di:i}, li)}>
-      <div><div class="name" onclick="renameKpiDeptLead(${i},${li})" title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+      <div><div class="name" onclick='editSlotMember({type:"kpiDeptLead",di:${i}},${li})' title="クリックで編集" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
       <div style="display:flex;align-items:center;gap:6px">
-        <span class="tag editable" onclick="editKpiDeptLeadRole(${i},${li})" title="クリックでタグ変更">${escapeHtml(m.role)}</span>
+        <span class="tag editable" onclick='editSlotMember({type:"kpiDeptLead",di:${i}},${li})' title="クリックで編集">${escapeHtml(m.role)}</span>
         <button class="icon-btn editor-only" onclick="removeKpiDeptLead(${i},${li})">×</button>
       </div>
     </div>
@@ -1305,9 +1344,9 @@ function renderKpiGroupNode(node, deptIdx, path, depth) {
   const titleClass = depth === 0 ? "group-title" : "subgroup-title";
   const memberRows = (node.members||[]).map((m, mi) => `
     <div class="slot" ${reorderData({type:"kpiGroupMembers", di:deptIdx, path}, mi)}>
-      <div><div class="name" onclick='renameKpiGroupNodeMember(${deptIdx},${pathStr},${mi})' title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+      <div><div class="name" onclick='editSlotMember({type:"kpiGroupMembers",di:${deptIdx},path:${pathStr}},${mi})' title="クリックで編集" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
       <div style="display:flex;align-items:center;gap:6px">
-        <span class="tag editable" onclick='editKpiGroupNodeMemberRole(${deptIdx},${pathStr},${mi})' title="クリックでタグ変更">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
+        <span class="tag editable" onclick='editSlotMember({type:"kpiGroupMembers",di:${deptIdx},path:${pathStr}},${mi})' title="クリックで編集">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
         <button class="icon-btn editor-only" onclick='removeKpiGroupNodeMember(${deptIdx},${pathStr},${mi})'>×</button>
       </div>
     </div>
@@ -1355,19 +1394,6 @@ function addKpiDeptLead(idx) {
 function removeKpiDeptLead(idx, li) {
   state.kpiDepts[idx].lead.splice(li,1); save(); render();
 }
-function editKpiDeptLeadRole(idx, li) {
-  inputDialog("タグを編集", state.kpiDepts[idx].lead[li].role, (v) => {
-    state.kpiDepts[idx].lead[li].role = v;
-    save(); render();
-  });
-}
-function renameKpiDeptLead(idx, li) {
-  inputDialog("担当者名を変更", state.kpiDepts[idx].lead[li].name, (v) => {
-    if (!v.trim()) return;
-    state.kpiDepts[idx].lead[li].name = v.trim();
-    save(); render();
-  });
-}
 function addKpiGroup(idx) {
   inputDialog("グループ名（例：インプット、採用人数）", "", (name) => {
     if (!name) return;
@@ -1405,21 +1431,6 @@ function removeKpiGroupNodeMember(deptIdx, path, mi) {
   getKpiGroupNode(state.kpiDepts[deptIdx], path).members.splice(mi, 1);
   save(); render();
 }
-function editKpiGroupNodeMemberRole(deptIdx, path, mi) {
-  const node = getKpiGroupNode(state.kpiDepts[deptIdx], path);
-  inputDialog("タグを編集（空でタグなし）", node.members[mi].role || "", (v) => {
-    node.members[mi].role = v;
-    save(); render();
-  });
-}
-function renameKpiGroupNodeMember(deptIdx, path, mi) {
-  const node = getKpiGroupNode(state.kpiDepts[deptIdx], path);
-  inputDialog("担当者名を変更", node.members[mi].name, (v) => {
-    if (!v.trim()) return;
-    node.members[mi].name = v.trim();
-    save(); render();
-  });
-}
 function addKpiGroupNodeChild(deptIdx, path) {
   inputDialog("小グループ名（例：プロジェクト、基礎カリキュラム）", "", (name) => {
     if (!name) return;
@@ -1443,7 +1454,7 @@ function buildMemberMap() {
     if (!map[n] && !map[alt] && !map[alt2]) ensure(n);
   });
   state.projects.forEach(p => {
-    p.students.forEach(n => { ensure(n).pjs.push(p.name); });
+    p.students.forEach(m => { ensure(m.name).pjs.push(p.name+(m.role?"("+m.role+")":"")); });
     (p.groups||[]).forEach(g => g.members.forEach(m => { ensure(m.name).pjs.push(p.name+"/"+g.name+(m.role?"("+m.role+")":"")); }));
   });
   state.departments.forEach(d => {
@@ -1664,15 +1675,15 @@ function pickMember(title, onPick, exclude=[]) {
 }
 
 function addToProject(idx, key, expand=false) {
-  const exclude = state.projects[idx][key];
+  const exclude = state.projects[idx][key].map(m => m.name);
   if (expand) state.projects[idx].capacity = (state.projects[idx].capacity||2) + 1;
   pickMember("メンバーを選択", (n) => {
-    state.projects[idx][key].push(n);
+    state.projects[idx][key].push({ name: n, role: "" });
     save(); render();
   }, exclude);
 }
 function removeFromProject(idx, key, name) {
-  state.projects[idx][key] = state.projects[idx][key].filter(n => n !== name);
+  state.projects[idx][key] = state.projects[idx][key].filter(m => m.name !== name);
   save(); render();
 }
 function editProject(idx) {
@@ -1738,20 +1749,6 @@ function addProjectGroupMember(idx, gi) {
 function removeProjectGroupMember(idx, gi, mi) {
   state.projects[idx].groups[gi].members.splice(mi,1); save(); render();
 }
-function renameProjectGroupMember(idx, gi, mi) {
-  inputDialog("メンバー名を変更", state.projects[idx].groups[gi].members[mi].name, (v) => {
-    if (!v.trim()) return;
-    state.projects[idx].groups[gi].members[mi].name = v.trim();
-    if (!state.members.includes(v.trim())) state.members.push(v.trim());
-    save(); render();
-  });
-}
-function editProjectGroupMemberRole(idx, gi, mi) {
-  inputDialog("タグを編集（空でタグなし）", state.projects[idx].groups[gi].members[mi].role || "", (v) => {
-    state.projects[idx].groups[gi].members[mi].role = v;
-    save(); render();
-  });
-}
 
 function addDept() {
   inputDialog("部署名", "", (name) => {
@@ -1794,34 +1791,6 @@ function addGroupMember(idx, gi) {
 function removeGroupMember(idx, gi, mi) {
   state.departments[idx].groups[gi].members.splice(mi,1); save(); render();
 }
-function editDeptLeadRole(idx, li) {
-  inputDialog("タグを編集（統括 / 副統括 / 秘書 など）", state.departments[idx].lead[li].role, (v) => {
-    state.departments[idx].lead[li].role = v;
-    save(); render();
-  });
-}
-function renameDeptLead(idx, li) {
-  inputDialog("メンバー名を変更", state.departments[idx].lead[li].name, (v) => {
-    if (!v.trim()) return;
-    state.departments[idx].lead[li].name = v.trim();
-    if (!state.members.includes(v.trim())) state.members.push(v.trim());
-    save(); render();
-  });
-}
-function editGroupMemberRole(idx, gi, mi) {
-  inputDialog("タグを編集（TL / 統括 / 立命館 など。空でタグなし）", state.departments[idx].groups[gi].members[mi].role || "", (v) => {
-    state.departments[idx].groups[gi].members[mi].role = v;
-    save(); render();
-  });
-}
-function renameGroupMember(idx, gi, mi) {
-  inputDialog("メンバー名を変更", state.departments[idx].groups[gi].members[mi].name, (v) => {
-    if (!v.trim()) return;
-    state.departments[idx].groups[gi].members[mi].name = v.trim();
-    if (!state.members.includes(v.trim())) state.members.push(v.trim());
-    save(); render();
-  });
-}
 function renameDept(idx) {
   inputDialog("部署名を変更", state.departments[idx].name, (v) => {
     if (!v.trim()) return;
@@ -1862,20 +1831,6 @@ function addSubGroupMember(idx, gi, sgi) {
 function removeSubGroupMember(idx, gi, sgi, mi) {
   state.departments[idx].groups[gi].subGroups[sgi].members.splice(mi, 1);
   save(); render();
-}
-function renameSubGroupMember(idx, gi, sgi, mi) {
-  inputDialog("メンバー名を変更", state.departments[idx].groups[gi].subGroups[sgi].members[mi].name, (v) => {
-    if (!v.trim()) return;
-    state.departments[idx].groups[gi].subGroups[sgi].members[mi].name = v.trim();
-    if (!state.members.includes(v.trim())) state.members.push(v.trim());
-    save(); render();
-  });
-}
-function editSubGroupMemberRole(idx, gi, sgi, mi) {
-  inputDialog("タグを編集（空でタグなし）", state.departments[idx].groups[gi].subGroups[sgi].members[mi].role || "", (v) => {
-    state.departments[idx].groups[gi].subGroups[sgi].members[mi].role = v;
-    save(); render();
-  });
 }
 
 function renameGroup(idx, gi) {
@@ -1938,8 +1893,8 @@ function deleteMember(name) {
     if (!state.deletedMembers) state.deletedMembers = [];
     if (!state.deletedMembers.includes(name)) state.deletedMembers.push(name);
     state.projects.forEach(p => {
-      p.mentors = p.mentors.filter(n => n !== name);
-      p.students = p.students.filter(n => n !== name);
+      p.mentors = p.mentors.filter(m => m.name !== name);
+      p.students = p.students.filter(m => m.name !== name);
       if (p.groups) p.groups.forEach(g => { g.members = g.members.filter(m => m.name !== name); });
     });
     state.departments.forEach(d => {
@@ -2025,8 +1980,8 @@ function saveMemberEdit(oldName) {
     state.members = state.members.map(n => n === oldName ? newName : n);
     if (!state.members.includes(newName) && !MEMBER_INFO[newName]) state.members.push(newName);
     state.projects.forEach(p => {
-      p.mentors = p.mentors.map(n => n === oldName ? newName : n);
-      p.students = p.students.map(n => n === oldName ? newName : n);
+      p.mentors.forEach(m => { if (m.name === oldName) m.name = newName; });
+      p.students.forEach(m => { if (m.name === oldName) m.name = newName; });
       if (p.groups) p.groups.forEach(g => g.members.forEach(m => { if (m.name === oldName) m.name = newName; }));
     });
     state.departments.forEach(d => {
@@ -2065,15 +2020,18 @@ function escapeHtml(s) {
 const EDIT_FNS = [
   "addProject","editProject","saveProject","deleteProject","addToProject","removeFromProject",
   "addProjectGroup","deleteProjectGroup","renameProjectGroup","addProjectGroupMember",
-  "removeProjectGroupMember","renameProjectGroupMember","editProjectGroupMemberRole",
-  "addDept","renameDept","addDeptLead","removeDeptLead","renameDeptLead","editDeptLeadRole",
+  "removeProjectGroupMember",
+  "addDept","renameDept","addDeptLead","removeDeptLead",
   "addGroup","deleteGroup","renameGroup","addGroupMember","removeGroupMember",
-  "renameGroupMember","editGroupMemberRole",
   "addSubGroup","deleteSubGroup","renameSubGroup","addSubGroupMember","removeSubGroupMember",
-  "renameSubGroupMember","editSubGroupMemberRole",
   "addSchool","deleteSchool","setSchoolLead","addSchoolStudent","removeSchoolStudent",
   "addToList","removeFromList",
   "addMember","editMember","saveMemberEdit","deleteMember","restoreMember",
+  "editSlotMember","saveSlotMember","reorderItem",
+  "toggleContractSigned",
+  "addCustomTab","deleteCustomTab",
+  "addKpiDept","renameKpiDept","addKpiDeptLead","removeKpiDeptLead",
+  "addKpiGroup","renameKpiGroupNode","deleteKpiGroupNode","addKpiGroupNodeMember","removeKpiGroupNodeMember","addKpiGroupNodeChild",
   "resetData",
 ];
 if (!isEditMode) {
