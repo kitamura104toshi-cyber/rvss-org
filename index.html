@@ -126,6 +126,22 @@
   }
   .slot .name { font-size: 14px; font-weight: 600; }
   .slot .role { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  body:not(.view-mode) .slot[data-reorder-key] { cursor: grab; touch-action: none; }
+  .slot.dragging { opacity: 0.5; cursor: grabbing; }
+  .reorder-ghost {
+    position: fixed;
+    z-index: 999;
+    pointer-events: none;
+    transform: translate(-50%, -100%);
+    background: var(--text);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 999px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+    white-space: nowrap;
+  }
   .slot.empty {
     background: #fff;
     border-style: dashed;
@@ -932,7 +948,7 @@ function renderProject(p, i) {
         </div>
       </div>
       ${(g.members||[]).map((m, mi) => `
-        <div class="slot">
+        <div class="slot" ${reorderData({type:"projectGroupMembers", pi:i, gi}, mi)}>
           <div><div class="name" onclick="renameProjectGroupMember(${i},${gi},${mi})" title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
           <div style="display:flex;align-items:center;gap:6px">
             <span class="tag editable" onclick="editProjectGroupMemberRole(${i},${gi},${mi})" title="クリックでタグ変更">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
@@ -953,10 +969,10 @@ function renderProject(p, i) {
         </div>
       </div>
       <div class="section-label">メンター</div>
-      ${(p.mentors||[]).map(n => slot(n, "", () => `removeFromProject(${i},'mentors','${n}')`)).join("") ||
+      ${(p.mentors||[]).map((n,mi) => slot(n, "", () => `removeFromProject(${i},'mentors','${n}')`, null, {type:"projectMentors", pi:i}, mi)).join("") ||
         `<div class="slot empty editor-only" onclick="addToProject(${i},'mentors')">+ メンターを設定</div>`}
       <div class="section-label">学生（原則${cap}名）</div>
-      ${(p.students||[]).map(n => slot(n, "学生", () => `removeFromProject(${i},'students','${n}')`, "PJアサイン")).join("")}
+      ${(p.students||[]).map((n,mi) => slot(n, "学生", () => `removeFromProject(${i},'students','${n}')`, "PJアサイン", {type:"projectStudents", pi:i}, mi)).join("")}
       ${p.students.length < cap ? `<div class="slot empty editor-only" onclick="addToProject(${i},'students')">+ 学生を追加</div>` : ""}
       <button class="btn-add editor-only" onclick="addToProject(${i},'students',true)">+ 追加枠</button>
       ${groupBlocks}
@@ -965,8 +981,8 @@ function renderProject(p, i) {
   `;
 }
 
-function slot(name, role, removeFn, tag) {
-  return `<div class="slot">
+function slot(name, role, removeFn, tag, reorderRef, reorderIdx) {
+  return `<div class="slot" ${reorderRef ? reorderData(reorderRef, reorderIdx) : ""}>
     <div>
       <div class="name">${escapeHtml(name)}</div>
       ${role ? `<div class="role">${escapeHtml(role)}</div>` : ""}
@@ -978,6 +994,108 @@ function slot(name, role, removeFn, tag) {
   </div>`;
 }
 
+// ====== 長押しドラッグでの並び替え ======
+function reorderData(ref, idx) {
+  const key = [ref.type, ref.pi, ref.gi, ref.sgi, ref.di, ref.path ? ref.path.join(".") : null]
+    .filter(v => v !== undefined && v !== null).join(":");
+  return `data-reorder='${JSON.stringify(ref)}' data-reorder-idx="${idx}" data-reorder-key="${key}"`;
+}
+function getReorderableArray(ref) {
+  switch (ref.type) {
+    case "projectMentors": return state.projects[ref.pi].mentors;
+    case "projectStudents": return state.projects[ref.pi].students;
+    case "projectGroupMembers": return state.projects[ref.pi].groups[ref.gi].members;
+    case "deptLead": return state.departments[ref.di].lead;
+    case "deptGroupMembers": return state.departments[ref.di].groups[ref.gi].members;
+    case "deptSubGroupMembers": return state.departments[ref.di].groups[ref.gi].subGroups[ref.sgi].members;
+    case "kpiDeptLead": return state.kpiDepts[ref.di].lead;
+    case "kpiGroupMembers": return getKpiGroupNode(state.kpiDepts[ref.di], ref.path).members;
+    default: return null;
+  }
+}
+function reorderItem(ref, fromIndex, toIndex) {
+  const arr = getReorderableArray(ref);
+  if (!arr || fromIndex === toIndex || fromIndex == null || toIndex == null) { render(); return; }
+  const [item] = arr.splice(fromIndex, 1);
+  arr.splice(toIndex, 0, item);
+  save(); render();
+}
+(function setupReorderDrag() {
+  const LONG_PRESS_MS = 350;
+  const MOVE_CANCEL_PX = 8;
+  let pressTimer = null;
+  let startX = 0, startY = 0;
+
+  function cleanupPress() {
+    clearTimeout(pressTimer);
+    document.removeEventListener("pointermove", onPreDragMove);
+    document.removeEventListener("pointerup", onPreDragUp);
+  }
+  function onPreDragMove(e) {
+    if (Math.abs(e.clientX - startX) > MOVE_CANCEL_PX || Math.abs(e.clientY - startY) > MOVE_CANCEL_PX) cleanupPress();
+  }
+  function onPreDragUp() { cleanupPress(); }
+
+  document.addEventListener("pointerdown", (e) => {
+    if (typeof isEditMode !== "undefined" && !isEditMode) return;
+    if (e.target.closest("button, .tag, input, textarea, select")) return;
+    const slotEl = e.target.closest(".slot[data-reorder-key]");
+    if (!slotEl) return;
+    startX = e.clientX; startY = e.clientY;
+    document.addEventListener("pointermove", onPreDragMove);
+    document.addEventListener("pointerup", onPreDragUp, { once: true });
+    pressTimer = setTimeout(() => {
+      cleanupPress();
+      beginReorderDrag(slotEl, e);
+    }, LONG_PRESS_MS);
+  });
+
+  function beginReorderDrag(slotEl, e) {
+    slotEl.classList.add("dragging");
+    document.body.style.userSelect = "none";
+    try { slotEl.setPointerCapture(e.pointerId); } catch (err) {}
+    const key = slotEl.dataset.reorderKey;
+
+    const nameText = (slotEl.querySelector(".name")?.textContent || "").trim();
+    const ghost = document.createElement("div");
+    ghost.className = "reorder-ghost";
+    ghost.textContent = nameText;
+    document.body.appendChild(ghost);
+    const positionGhost = (x, y) => {
+      ghost.style.left = x + "px";
+      ghost.style.top = (y - 36) + "px";
+    };
+    positionGhost(e.clientX, e.clientY);
+
+    const onMove = (ev) => {
+      positionGhost(ev.clientX, ev.clientY);
+      const siblings = Array.from(document.querySelectorAll(`.slot[data-reorder-key="${key}"]`)).filter(el => el !== slotEl);
+      let after = null, closestOffset = -Infinity;
+      siblings.forEach(sib => {
+        const box = sib.getBoundingClientRect();
+        const offset = ev.clientY - box.top - box.height / 2;
+        if (offset < 0 && offset > closestOffset) { closestOffset = offset; after = sib; }
+      });
+      const parent = slotEl.parentElement;
+      if (after) parent.insertBefore(slotEl, after);
+      else parent.appendChild(slotEl);
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      slotEl.classList.remove("dragging");
+      document.body.style.userSelect = "";
+      ghost.remove();
+      const ref = JSON.parse(slotEl.dataset.reorder);
+      const fromIndex = parseInt(slotEl.dataset.reorderIdx, 10);
+      const toIndex = Array.from(document.querySelectorAll(`.slot[data-reorder-key="${key}"]`)).indexOf(slotEl);
+      reorderItem(ref, fromIndex, toIndex);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp, { once: true });
+  }
+})();
+
 function deptTotal(d) {
   const lead = (d.lead||[]).length;
   const grp = (d.groups||[]).reduce((s,g)=> s + (g.members||[]).length + (g.subGroups||[]).reduce((ss,sg)=>ss+(sg.members||[]).length,0), 0);
@@ -986,7 +1104,7 @@ function deptTotal(d) {
 
 function renderDept(d, i) {
   const leadRows = (d.lead||[]).map((m, li) => `
-    <div class="slot">
+    <div class="slot" ${reorderData({type:"deptLead", di:i}, li)}>
       <div><div class="name" onclick="renameDeptLead(${i},${li})" title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
       <div style="display:flex;align-items:center;gap:6px">
         <span class="tag editable" onclick="editDeptLeadRole(${i},${li})" title="クリックでタグ変更">${escapeHtml(m.role)}</span>
@@ -1005,7 +1123,7 @@ function renderDept(d, i) {
         </div>
       </div>
       ${g.members.map((m, mi) => `
-        <div class="slot">
+        <div class="slot" ${reorderData({type:"deptGroupMembers", di:i, gi}, mi)}>
           <div><div class="name" onclick="renameGroupMember(${i},${gi},${mi})" title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
           <div style="display:flex;align-items:center;gap:6px">
             <span class="tag editable" onclick="editGroupMemberRole(${i},${gi},${mi})" title="クリックでタグ変更">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
@@ -1024,7 +1142,7 @@ function renderDept(d, i) {
             </div>
           </div>
           ${sg.members.map((m, mi) => `
-            <div class="slot">
+            <div class="slot" ${reorderData({type:"deptSubGroupMembers", di:i, gi, sgi}, mi)}>
               <div><div class="name" onclick="renameSubGroupMember(${i},${gi},${sgi},${mi})" style="cursor:pointer" title="クリックで名前変更">${escapeHtml(m.name)}</div></div>
               <div style="display:flex;align-items:center;gap:6px">
                 <span class="tag editable" onclick="editSubGroupMemberRole(${i},${gi},${sgi},${mi})" title="クリックでタグ変更">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
@@ -1157,7 +1275,7 @@ function kpiDeptTotal(d) {
 }
 function renderKpiDept(d, i) {
   const leadRows = (d.lead||[]).map((m, li) => `
-    <div class="slot">
+    <div class="slot" ${reorderData({type:"kpiDeptLead", di:i}, li)}>
       <div><div class="name" onclick="renameKpiDeptLead(${i},${li})" title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
       <div style="display:flex;align-items:center;gap:6px">
         <span class="tag editable" onclick="editKpiDeptLeadRole(${i},${li})" title="クリックでタグ変更">${escapeHtml(m.role)}</span>
@@ -1186,7 +1304,7 @@ function renderKpiGroupNode(node, deptIdx, path, depth) {
   const boxClass = depth === 0 ? "group-box" : "subgroup-box";
   const titleClass = depth === 0 ? "group-title" : "subgroup-title";
   const memberRows = (node.members||[]).map((m, mi) => `
-    <div class="slot">
+    <div class="slot" ${reorderData({type:"kpiGroupMembers", di:deptIdx, path}, mi)}>
       <div><div class="name" onclick='renameKpiGroupNodeMember(${deptIdx},${pathStr},${mi})' title="クリックで名前変更" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
       <div style="display:flex;align-items:center;gap:6px">
         <span class="tag editable" onclick='editKpiGroupNodeMemberRole(${deptIdx},${pathStr},${mi})' title="クリックでタグ変更">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
