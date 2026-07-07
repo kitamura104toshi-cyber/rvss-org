@@ -1611,9 +1611,7 @@ function renderMemberCard(n, info) {
         </div>
       </div>
       <div style="margin-bottom:10px">
-        ${mi.contractSigned
-          ? `<span class="tag editable" style="background:var(--green,#e6f4ea);color:var(--green-text,#2f7d4a)" onclick="toggleContractSigned('${n}')" title="クリックで未契約に戻す">✅ 契約済み</span>`
-          : `<span class="tag editable" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc" onclick="toggleContractSigned('${n}')" title="クリックで契約済みにする">未契約</span>`}
+        ${contractStatusTagHTML(n, mi.contractStatus)}
       </div>
       <div style="line-height:1.8;margin-bottom:12px">
         ${mi.university ? univTagHTML(mi.university) : ""}
@@ -1961,13 +1959,27 @@ function restoreMember(name) {
   }
   save(); render();
 }
-function toggleContractSigned(name) {
+const CONTRACT_STATUSES = ["none", "sent", "nda"];
+const CONTRACT_STATUS_LABELS = { none: "未締結", sent: "契約書送付済み", nda: "NDA締結済み" };
+const CONTRACT_STATUS_STYLES = {
+  none: "background:#fff;color:#6b6b6b;border:1px solid #e5e3dc",
+  sent: "background:var(--orange);color:var(--orange-text)",
+  nda: "background:var(--green,#e6f4ea);color:var(--green-text,#2f7d4a)"
+};
+function contractStatusTagHTML(name, status) {
+  const s = CONTRACT_STATUSES.includes(status) ? status : "none";
+  const icon = s === "nda" ? "✅ " : s === "sent" ? "📤 " : "";
+  return `<span class="tag editable" style="${CONTRACT_STATUS_STYLES[s]}" onclick="cycleContractStatus('${name}')" title="クリックで次のステータスへ">${icon}${CONTRACT_STATUS_LABELS[s]}</span>`;
+}
+function cycleContractStatus(name) {
   const current = memberInfo(name) || {};
+  const currentStatus = CONTRACT_STATUSES.includes(current.contractStatus) ? current.contractStatus : "none";
+  const nextStatus = CONTRACT_STATUSES[(CONTRACT_STATUSES.indexOf(currentStatus) + 1) % CONTRACT_STATUSES.length];
   if (!state.memberOverrides) state.memberOverrides = {};
   state.memberOverrides[name] = Object.assign(
     { university: "", area: "", experience: "", skills: "", canDo: "", wantToDo: "" },
     current,
-    { contractSigned: !current.contractSigned }
+    { contractStatus: nextStatus }
   );
   save(); render();
 }
@@ -2039,12 +2051,12 @@ function saveMemberEdit(oldName) {
   }
 
   // プロフィール情報のoverride保存（契約状況・BSバッジは編集フォーム対象外なので保持する）
-  const contractSigned = (state.memberOverrides[newName] || {}).contractSigned;
+  const contractStatus = (state.memberOverrides[newName] || {}).contractStatus;
   const isBS = (state.memberOverrides[newName] || {}).isBS;
-  if (!univ && !area && !experience && !skills && !canDo && !wantToDo && !contractSigned && !isBS) {
+  if (!univ && !area && !experience && !skills && !canDo && !wantToDo && !contractStatus && !isBS) {
     delete state.memberOverrides[newName];
   } else {
-    state.memberOverrides[newName] = { university: univ, area: area, experience, skills, canDo, wantToDo, contractSigned, isBS };
+    state.memberOverrides[newName] = { university: univ, area: area, experience, skills, canDo, wantToDo, contractStatus, isBS };
   }
   save(); closeModal(); render();
 }
@@ -2067,7 +2079,7 @@ const EDIT_FNS = [
   "addToList","removeFromList",
   "addMember","editMember","saveMemberEdit","deleteMember","restoreMember",
   "editSlotMember","saveSlotMember","reorderItem",
-  "toggleContractSigned",
+  "cycleContractStatus",
   "addCustomTab","deleteCustomTab",
   "addKpiDept","renameKpiDept","addKpiDeptLead","removeKpiDeptLead",
   "addKpiGroup","renameKpiGroupNode","deleteKpiGroupNode","addKpiGroupNodeMember","removeKpiGroupNodeMember","addKpiGroupNodeChild",
