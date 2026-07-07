@@ -1603,10 +1603,11 @@ function renderAll() {
     .filter(([n]) => !allFilterSkill || hasSkillCategory(n, allFilterSkill))
     .sort(([a],[b]) => a.localeCompare(b,"ja"));
 
-  // BSメンバー（学生メンバーではないため別枠にする）
+  // BSメンバー（学生メンバーではないため別枠にする。件数表示からも除く）
   const isBSName = (n) => !!(memberInfo(n) || {}).isBS;
   const regularFiltered = filtered.filter(([n]) => !isBSName(n));
   const bsFiltered = filtered.filter(([n]) => isBSName(n));
+  const totalRegular = Object.keys(map).filter(n => !isBSName(n)).length;
 
   const cards = regularFiltered.map(([n,info]) => renderMemberCard(n, info)).join("");
   const bsSection = bsFiltered.length > 0 ? `
@@ -1629,8 +1630,8 @@ function renderAll() {
 
   const filterNote = [allFilterArea, assignDef && assignDef.label, allFilterSkill].filter(Boolean).join(" / ");
   const titleText = filterNote
-    ? `全メンバー（${filtered.length} / 総${Object.keys(map).length}名） — ${filterNote}`
-    : `全メンバー（${Object.keys(map).length}名）`;
+    ? `全メンバー（${regularFiltered.length} / 総${totalRegular}名） — ${filterNote}`
+    : `全メンバー（${totalRegular}名）`;
   return `
     <div class="card" style="margin-bottom:16px">
       <div class="card-head"><div class="card-title">${escapeHtml(titleText)}</div></div>
