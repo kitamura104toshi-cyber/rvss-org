@@ -1546,15 +1546,15 @@ function renderAll() {
     ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllAreaChange('')">エリア絞り込みを解除</span>`
     : "";
 
-  // アサイン状況フィルター
+  // アサイン状況フィルター（「どこにも未所属」はBSメンバー〈学生ではないメンター等〉を対象外にする）
   const assignDefs = [
-    { id: "noPj",        label: "プロジェクト未所属", test: i => i.pjs.length === 0 },
-    { id: "noCommunity", label: "コミュニティ運営なし", test: i => i.depts.length === 0 },
-    { id: "noAny",       label: "どこにも未所属",     test: i => i.pjs.length === 0 && i.depts.length === 0 && (i.schools||[]).length === 0 },
+    { id: "noPj",        label: "プロジェクト未所属", test: (i, n) => i.pjs.length === 0 },
+    { id: "noCommunity", label: "コミュニティ運営なし", test: (i, n) => i.depts.length === 0 },
+    { id: "noAny",       label: "どこにも未所属",     test: (i, n) => i.pjs.length === 0 && i.depts.length === 0 && (i.schools||[]).length === 0 && !(memberInfo(n)||{}).isBS },
   ];
   const assignDef = assignDefs.find(d => d.id === allFilterAssign);
   const assignSummary = assignDefs.map(d => {
-    const count = Object.values(map).filter(d.test).length;
+    const count = Object.entries(map).filter(([n, i]) => d.test(i, n)).length;
     const active = allFilterAssign === d.id;
     const style = `background:${active?'#2a2a2a':'#fff'};color:${active?'#fff':'#6b6b6b'};border:1px solid ${active?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${active?'font-weight:700':''}`;
     return `<span class="tag" style="${style}" onclick="onAllAssignChange('${d.id}')">${d.label} ${count}</span>`;
@@ -1594,7 +1594,7 @@ function renderAll() {
       const mi = memberInfo(n);
       return mi && mi.area === allFilterArea;
     })
-    .filter(([n, info]) => !assignDef || assignDef.test(info))
+    .filter(([n, info]) => !assignDef || assignDef.test(info, n))
     .filter(([n]) => !allFilterSkill || hasSkillCategory(n, allFilterSkill))
     .sort(([a],[b]) => a.localeCompare(b,"ja"));
 
