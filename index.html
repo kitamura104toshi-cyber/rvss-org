@@ -873,8 +873,9 @@ function getStats() {
       (g.subGroups||[]).forEach(sg => sg.members.forEach(m => { if (!isBSMember(m.name)) communityNames.add(m.name); }));
     });
   });
-  const allMembers = new Set(state.members);
+  const allMembers = new Set(state.members.filter(n => !isDeleted(n)));
   Object.keys(MEMBER_INFO).forEach(n => {
+    if (isDeleted(n)) return;
     const alt = n.replace(/﨑/g, "崎");
     const alt2 = n.replace(/崎/g, "﨑");
     if (!allMembers.has(n) && !allMembers.has(alt) && !allMembers.has(alt2)) {
