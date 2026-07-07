@@ -1560,12 +1560,15 @@ function renderAll() {
     return `<span class="tag" style="${style}" onclick="onAllAssignChange('${d.id}')">${d.label} ${count}</span>`;
   }).join(" ");
 
-  // スキルフィルター（大分類チップのみ表示。カテゴリ内のいずれかの語が
-  // memberInfo.skills の自由記述に含まれていればヒットする）
+  // スキルフィルター（大分類チップのみ表示）。各メンバーに手動で分類済みの
+  // memberInfo.skillCategories があればそれを優先し、なければカテゴリ内のいずれかの
+  // キーワードが memberInfo.skills の自由記述に含まれるかで判定する（フォールバック）。
   const hasSkillCategory = (n, categoryName) => {
     const cat = SKILL_CATEGORIES.find(c => c.name === categoryName);
     const mi = memberInfo(n);
-    if (!cat || !mi || !mi.skills) return false;
+    if (!cat || !mi) return false;
+    if (mi.skillCategories) return mi.skillCategories.includes(categoryName);
+    if (!mi.skills) return false;
     return cat.keywords.some(k => mi.skills.includes(k));
   };
   const skillCounts = {};
