@@ -858,15 +858,19 @@ function allAssignedNames() {
   });
   return set;
 }
+// BSバッジ付きメンバー（学生ではないメンター等）はダッシュボード集計から除外する
+function isBSMember(n) {
+  return !!(memberInfo(n) || {}).isBS;
+}
 function getStats() {
   const pjAssigned = new Set();
-  state.projects.forEach(p => (p.students||[]).forEach(m => pjAssigned.add(m.name)));
+  state.projects.forEach(p => (p.students||[]).forEach(m => { if (!isBSMember(m.name)) pjAssigned.add(m.name); }));
   const communityNames = new Set();
   state.departments.forEach(d => {
-    (d.lead||[]).forEach(m => communityNames.add(m.name));
+    (d.lead||[]).forEach(m => { if (!isBSMember(m.name)) communityNames.add(m.name); });
     (d.groups||[]).forEach(g => {
-      g.members.forEach(m => communityNames.add(m.name));
-      (g.subGroups||[]).forEach(sg => sg.members.forEach(m => communityNames.add(m.name)));
+      g.members.forEach(m => { if (!isBSMember(m.name)) communityNames.add(m.name); });
+      (g.subGroups||[]).forEach(sg => sg.members.forEach(m => { if (!isBSMember(m.name)) communityNames.add(m.name); }));
     });
   });
   const allMembers = new Set(state.members);
@@ -877,13 +881,14 @@ function getStats() {
       allMembers.add(n);
     }
   });
+  const totalCount = Array.from(allMembers).filter(n => !isBSMember(n)).length;
   return {
     projects: state.projects.length,
     pjAssign: pjAssigned.size,
     community: communityNames.size,
     onbo: state.onboarding.length,
     unassigned: state.unassigned.length,
-    total: allMembers.size,
+    total: totalCount,
   };
 }
 
@@ -1548,9 +1553,9 @@ function renderAll() {
 
   // アサイン状況フィルター（「どこにも未所属」はBSメンバー〈学生ではないメンター等〉を対象外にする）
   const assignDefs = [
-    { id: "noPj",        label: "プロジェクト未所属", test: (i, n) => i.pjs.length === 0 },
-    { id: "noCommunity", label: "コミュニティ運営なし", test: (i, n) => i.depts.length === 0 },
-    { id: "noAny",       label: "どこにも未所属",     test: (i, n) => i.pjs.length === 0 && i.depts.length === 0 && (i.schools||[]).length === 0 && !(memberInfo(n)||{}).isBS },
+    { id: "noPj",        label: "プロジェクト未所属", test: (i, n) => i.pjs.length === 0 && !isBSMember(n) },
+    { id: "noCommunity", label: "コミュニティ運営なし", test: (i, n) => i.depts.length === 0 && !isBSMember(n) },
+    { id: "noAny",       label: "どこにも未所属",     test: (i, n) => i.pjs.length === 0 && i.depts.length === 0 && (i.schools||[]).length === 0 && !isBSMember(n) },
   ];
   const assignDef = assignDefs.find(d => d.id === allFilterAssign);
   const assignSummary = assignDefs.map(d => {
