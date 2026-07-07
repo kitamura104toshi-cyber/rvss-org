@@ -616,6 +616,9 @@ const AREA_COLORS = {
   "海外":   { bg: "#fff8e1", fg: "#8a6d3b" },
 };
 
+// 全メンバータブのスキル絞り込みチップ（ビジネススキル・個人スキルを混在させた候補集）
+const SKILL_LIST = ["映像制作","デザイン","ライティング","AI","プログラミング","データ分析","ロジカルシンキング","構造化","企画","マーケティング","インスタ運用","広報/PR","営業","財務","法務","英語"];
+
 function memberInfo(name) {
   const ov = (typeof state !== "undefined" && state.memberOverrides) || {};
   const tries = [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")];
@@ -653,6 +656,14 @@ function onAllAreaChange(v) {
 let allFilterAssign = "";
 function onAllAssignChange(v) {
   allFilterAssign = (allFilterAssign === v) ? "" : v;
+  const el = document.getElementById("content");
+  if (el) el.innerHTML = renderAll();
+}
+
+// 全メンバータブのスキル絞り込み（"" = すべて）
+let allFilterSkill = "";
+function onAllSkillChange(v) {
+  allFilterSkill = (allFilterSkill === v) ? "" : v;
   const el = document.getElementById("content");
   if (el) el.innerHTML = renderAll();
 }
@@ -1040,6 +1051,7 @@ function goToMemberCard(name) {
   allFilterSearch = "";
   allFilterArea = "";
   allFilterAssign = "";
+  allFilterSkill = "";
   render();
   setTimeout(() => {
     const card = Array.from(document.querySelectorAll(".grid .card")).find(c => {
@@ -1535,6 +1547,22 @@ function renderAll() {
     return `<span class="tag" style="${style}" onclick="onAllAssignChange('${d.id}')">${d.label} ${count}</span>`;
   }).join(" ");
 
+  // スキルフィルター（memberInfo.skills の自由記述に絞り込みたい語が含まれるか）
+  const hasSkill = (n, skill) => {
+    const mi = memberInfo(n);
+    return !!(mi && mi.skills && mi.skills.includes(skill));
+  };
+  const skillCounts = {};
+  Object.keys(map).forEach(n => {
+    SKILL_LIST.forEach(s => { if (hasSkill(n, s)) skillCounts[s] = (skillCounts[s]||0) + 1; });
+  });
+  const skillSummary = SKILL_LIST.map(s => {
+    const active = allFilterSkill === s;
+    const count = skillCounts[s] || 0;
+    const style = `background:${active?'#2a2a2a':'#fff'};color:${active?'#fff':'#6b6b6b'};border:1px solid ${active?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${active?'font-weight:700':''}`;
+    return `<span class="tag" style="${style}" onclick="onAllSkillChange('${s}')">${s} ${count}</span>`;
+  }).join(" ");
+
   const filtered = Object.entries(map)
     .filter(([n]) => {
       if (!q) return true;
@@ -1548,6 +1576,7 @@ function renderAll() {
       return mi && mi.area === allFilterArea;
     })
     .filter(([n, info]) => !assignDef || assignDef.test(info))
+    .filter(([n]) => !allFilterSkill || hasSkill(n, allFilterSkill))
     .sort(([a],[b]) => a.localeCompare(b,"ja"));
 
   // BSメンバー（学生メンバーではないため別枠にする）
@@ -1574,7 +1603,7 @@ function renderAll() {
     </div>
   ` : "";
 
-  const filterNote = [allFilterArea, assignDef && assignDef.label].filter(Boolean).join(" / ");
+  const filterNote = [allFilterArea, assignDef && assignDef.label, allFilterSkill].filter(Boolean).join(" / ");
   const titleText = filterNote
     ? `全メンバー（${filtered.length} / 総${Object.keys(map).length}名） — ${filterNote}`
     : `全メンバー（${Object.keys(map).length}名）`;
@@ -1584,9 +1613,13 @@ function renderAll() {
       <div style="margin-bottom:10px;line-height:2">
         <span style="font-size:12px;color:var(--muted);margin-right:6px">エリア:</span>${areaSummary || '<span style="font-size:12px;color:var(--muted)">なし</span>'}${clearChip}
       </div>
-      <div style="margin-bottom:0;line-height:2">
+      <div style="margin-bottom:10px;line-height:2">
         <span style="font-size:12px;color:var(--muted);margin-right:6px">アサイン状況:</span>${assignSummary}
         ${allFilterAssign ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllAssignChange('${allFilterAssign}')">絞り込みを解除</span>` : ""}
+      </div>
+      <div style="margin-bottom:0;line-height:2">
+        <span style="font-size:12px;color:var(--muted);margin-right:6px">スキル:</span>${skillSummary}
+        ${allFilterSkill ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllSkillChange('${allFilterSkill}')">絞り込みを解除</span>` : ""}
       </div>
     </div>
     ${cards ? `<div class="grid">${cards}</div>` : '<div class="warn">該当メンバーがいません</div>'}
