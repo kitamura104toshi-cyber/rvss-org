@@ -616,8 +616,15 @@ const AREA_COLORS = {
   "海外":   { bg: "#fff8e1", fg: "#8a6d3b" },
 };
 
-// 全メンバータブのスキル絞り込みチップ（ビジネススキル・個人スキルを混在させた候補集）
-const SKILL_LIST = ["映像制作","デザイン","ライティング","AI","プログラミング","データ分析","ロジカルシンキング","構造化","企画","マーケティング","インスタ運用","広報/PR","営業","財務","法務","英語"];
+// 全メンバータブのスキル絞り込みチップ（大分類のみ表示し、各カテゴリに紐づく具体スキル語のいずれかが
+// memberInfo.skills に含まれていればヒットする）
+const SKILL_CATEGORIES = [
+  { name: "クリエイティブ系", keywords: ["映像制作", "動画編集", "画像編集", "デザイン", "ライティング", "撮影", "編集"] },
+  { name: "技術系",       keywords: ["AI", "プログラミング", "データ分析", "エンジニアリング", "開発", "Web制作"] },
+  { name: "思考・企画系",   keywords: ["ロジカルシンキング", "構造化", "企画", "戦略", "課題解決"] },
+  { name: "マーケ・広報系", keywords: ["マーケティング", "インスタ運用", "SNS運用", "広報", "PR"] },
+  { name: "ビジネス系",     keywords: ["営業", "財務", "経理", "法務", "英語", "交渉"] },
+];
 
 function memberInfo(name) {
   const ov = (typeof state !== "undefined" && state.memberOverrides) || {};
@@ -1547,20 +1554,23 @@ function renderAll() {
     return `<span class="tag" style="${style}" onclick="onAllAssignChange('${d.id}')">${d.label} ${count}</span>`;
   }).join(" ");
 
-  // スキルフィルター（memberInfo.skills の自由記述に絞り込みたい語が含まれるか）
-  const hasSkill = (n, skill) => {
+  // スキルフィルター（大分類チップのみ表示。カテゴリ内のいずれかの語が
+  // memberInfo.skills の自由記述に含まれていればヒットする）
+  const hasSkillCategory = (n, categoryName) => {
+    const cat = SKILL_CATEGORIES.find(c => c.name === categoryName);
     const mi = memberInfo(n);
-    return !!(mi && mi.skills && mi.skills.includes(skill));
+    if (!cat || !mi || !mi.skills) return false;
+    return cat.keywords.some(k => mi.skills.includes(k));
   };
   const skillCounts = {};
   Object.keys(map).forEach(n => {
-    SKILL_LIST.forEach(s => { if (hasSkill(n, s)) skillCounts[s] = (skillCounts[s]||0) + 1; });
+    SKILL_CATEGORIES.forEach(c => { if (hasSkillCategory(n, c.name)) skillCounts[c.name] = (skillCounts[c.name]||0) + 1; });
   });
-  const skillSummary = SKILL_LIST.map(s => {
-    const active = allFilterSkill === s;
-    const count = skillCounts[s] || 0;
+  const skillSummary = SKILL_CATEGORIES.map(c => {
+    const active = allFilterSkill === c.name;
+    const count = skillCounts[c.name] || 0;
     const style = `background:${active?'#2a2a2a':'#fff'};color:${active?'#fff':'#6b6b6b'};border:1px solid ${active?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${active?'font-weight:700':''}`;
-    return `<span class="tag" style="${style}" onclick="onAllSkillChange('${s}')">${s} ${count}</span>`;
+    return `<span class="tag" style="${style}" onclick="onAllSkillChange('${c.name}')" title="${escapeHtml(c.keywords.join('・'))}">${c.name} ${count}</span>`;
   }).join(" ");
 
   const filtered = Object.entries(map)
@@ -1576,7 +1586,7 @@ function renderAll() {
       return mi && mi.area === allFilterArea;
     })
     .filter(([n, info]) => !assignDef || assignDef.test(info))
-    .filter(([n]) => !allFilterSkill || hasSkill(n, allFilterSkill))
+    .filter(([n]) => !allFilterSkill || hasSkillCategory(n, allFilterSkill))
     .sort(([a],[b]) => a.localeCompare(b,"ja"));
 
   // BSメンバー（学生メンバーではないため別枠にする）
