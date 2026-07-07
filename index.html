@@ -142,6 +142,13 @@
     box-shadow: 0 4px 14px rgba(0,0,0,0.25);
     white-space: nowrap;
   }
+  .card.highlight-flash {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+    transition: outline-color 1.4s ease-out;
+  }
+  .name-link { cursor: pointer; }
+  .name-link:hover { text-decoration: underline; }
   .slot.empty {
     background: #fff;
     border-style: dashed;
@@ -171,7 +178,6 @@
   body.view-mode .editor-only { display: none !important; }
   body.view-mode .tag.editable { cursor: default; pointer-events: none; }
   body.view-mode .tag.editable:hover { outline: none; }
-  body.view-mode .name[onclick],
   body.view-mode .card-title[onclick],
   body.view-mode .group-title[onclick],
   body.view-mode .subgroup-title[onclick] { cursor: default !important; pointer-events: none; }
@@ -956,7 +962,7 @@ function renderProject(p, i) {
       </div>
       ${(g.members||[]).map((m, mi) => `
         <div class="slot" ${reorderData({type:"projectGroupMembers", pi:i, gi}, mi)}>
-          <div><div class="name" onclick='editSlotMember({type:"projectGroupMembers",pi:${i},gi:${gi}},${mi})' title="クリックで編集" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+          <div><div class="name name-link" onclick='goToMemberCard("${m.name}")' title="クリックでメンバーカードへ">${escapeHtml(m.name)}</div></div>
           <div style="display:flex;align-items:center;gap:6px">
             <span class="tag editable" onclick='editSlotMember({type:"projectGroupMembers",pi:${i},gi:${gi}},${mi})' title="クリックで編集">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
             <button class="icon-btn editor-only" onclick="removeProjectGroupMember(${i},${gi},${mi})">×</button>
@@ -989,10 +995,10 @@ function renderProject(p, i) {
 }
 
 function slot(name, role, removeFn, reorderRef, reorderIdx) {
-  const editAttr = reorderRef ? `onclick='editSlotMember(${JSON.stringify(reorderRef)},${reorderIdx})' style="cursor:pointer" title="クリックで編集"` : "";
+  const editAttr = reorderRef ? `onclick='editSlotMember(${JSON.stringify(reorderRef)},${reorderIdx})' title="クリックで編集"` : "";
   return `<div class="slot" ${reorderRef ? reorderData(reorderRef, reorderIdx) : ""}>
     <div>
-      <div class="name" ${editAttr}>${escapeHtml(name)}</div>
+      <div class="name name-link" onclick='goToMemberCard("${name}")' title="クリックでメンバーカードへ">${escapeHtml(name)}</div>
       <span class="tag editable" ${editAttr}>${role ? escapeHtml(role) : "＋タグ"}</span>
     </div>
     <div style="display:flex;align-items:center;gap:6px">
@@ -1026,6 +1032,26 @@ function reorderItem(ref, fromIndex, toIndex) {
   const [item] = arr.splice(fromIndex, 1);
   arr.splice(toIndex, 0, item);
   save(); render();
+}
+// 名前クリックで「全メンバー」タブの本人カードへ遷移する（プロジェクト/コミュニティ運営/スクール受講者/
+// オンボーディング/未アサイン/KPI管理者のどこからでも共通で使う。閲覧モードでも動作する）
+function goToMemberCard(name) {
+  currentTab = "all";
+  allFilterSearch = "";
+  allFilterArea = "";
+  allFilterAssign = "";
+  render();
+  setTimeout(() => {
+    const card = Array.from(document.querySelectorAll(".grid .card")).find(c => {
+      const title = c.querySelector(".card-title");
+      return title && title.textContent.trim().startsWith(name);
+    });
+    if (card) {
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+      card.classList.add("highlight-flash");
+      setTimeout(() => card.classList.remove("highlight-flash"), 1600);
+    }
+  }, 30);
 }
 // 名前クリックで「名前＋タグ」を一括編集するモーダル（部署/KPI/プロジェクトの担当者すべて共通）
 function editSlotMember(ref, idx) {
@@ -1144,7 +1170,7 @@ function deptTotal(d) {
 function renderDept(d, i) {
   const leadRows = (d.lead||[]).map((m, li) => `
     <div class="slot" ${reorderData({type:"deptLead", di:i}, li)}>
-      <div><div class="name" onclick='editSlotMember({type:"deptLead",di:${i}},${li})' title="クリックで編集" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+      <div><div class="name name-link" onclick='goToMemberCard("${m.name}")' title="クリックでメンバーカードへ">${escapeHtml(m.name)}</div></div>
       <div style="display:flex;align-items:center;gap:6px">
         <span class="tag editable" onclick='editSlotMember({type:"deptLead",di:${i}},${li})' title="クリックで編集">${escapeHtml(m.role)}</span>
         <button class="icon-btn editor-only" onclick="removeDeptLead(${i},${li})">×</button>
@@ -1163,7 +1189,7 @@ function renderDept(d, i) {
       </div>
       ${g.members.map((m, mi) => `
         <div class="slot" ${reorderData({type:"deptGroupMembers", di:i, gi}, mi)}>
-          <div><div class="name" onclick='editSlotMember({type:"deptGroupMembers",di:${i},gi:${gi}},${mi})' title="クリックで編集" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+          <div><div class="name name-link" onclick='goToMemberCard("${m.name}")' title="クリックでメンバーカードへ">${escapeHtml(m.name)}</div></div>
           <div style="display:flex;align-items:center;gap:6px">
             <span class="tag editable" onclick='editSlotMember({type:"deptGroupMembers",di:${i},gi:${gi}},${mi})' title="クリックで編集">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
             <button class="icon-btn editor-only" onclick="removeGroupMember(${i},${gi},${mi})">×</button>
@@ -1182,7 +1208,7 @@ function renderDept(d, i) {
           </div>
           ${sg.members.map((m, mi) => `
             <div class="slot" ${reorderData({type:"deptSubGroupMembers", di:i, gi, sgi}, mi)}>
-              <div><div class="name" onclick='editSlotMember({type:"deptSubGroupMembers",di:${i},gi:${gi},sgi:${sgi}},${mi})' title="クリックで編集" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+              <div><div class="name name-link" onclick='goToMemberCard("${m.name}")' title="クリックでメンバーカードへ">${escapeHtml(m.name)}</div></div>
               <div style="display:flex;align-items:center;gap:6px">
                 <span class="tag editable" onclick='editSlotMember({type:"deptSubGroupMembers",di:${i},gi:${gi},sgi:${sgi}},${mi})' title="クリックで編集">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
                 <button class="icon-btn editor-only" onclick="removeSubGroupMember(${i},${gi},${sgi},${mi})">×</button>
@@ -1222,17 +1248,17 @@ function renderSchool(s, i) {
       </div>
       <div class="section-label">TL / 副TL</div>
       <div class="slot">
-        <div><div class="name">${escapeHtml(s.tl||"")}</div><div class="role">TL</div></div>
+        <div><div class="name name-link" onclick='goToMemberCard("${s.tl||""}")' title="クリックでメンバーカードへ">${escapeHtml(s.tl||"")}</div><div class="role">TL</div></div>
         <button class="btn editor-only" onclick="setSchoolLead(${i},'tl')">変更</button>
       </div>
       <div class="slot">
-        <div><div class="name">${escapeHtml(s.subTl||"")}</div><div class="role">副TL</div></div>
+        <div><div class="name name-link" onclick='goToMemberCard("${s.subTl||""}")' title="クリックでメンバーカードへ">${escapeHtml(s.subTl||"")}</div><div class="role">副TL</div></div>
         <button class="btn editor-only" onclick="setSchoolLead(${i},'subTl')">変更</button>
       </div>
       <div class="section-label">受講者</div>
       ${s.students.map(n => `
         <div class="slot">
-          <div class="name">${escapeHtml(n)}</div>
+          <div class="name name-link" onclick='goToMemberCard("${n}")' title="クリックでメンバーカードへ">${escapeHtml(n)}</div>
           <button class="icon-btn editor-only" onclick="removeSchoolStudent(${i},'${n}')">×</button>
         </div>
       `).join("")}
@@ -1274,7 +1300,7 @@ function renderOnboCard() {
       <div class="card-head"><div class="card-title">オンボーディング中</div>
         <button class="btn editor-only" onclick="addToList('onboarding')">+ 追加</button></div>
       <div class="unassigned-list">
-        ${state.onboarding.map((n,i)=>`<span class="chip onbo">${escapeHtml(n)} <button class="icon-btn editor-only" onclick="removeFromList('onboarding',${i})">×</button></span>`).join("")}
+        ${state.onboarding.map((n,i)=>`<span class="chip onbo"><span class="name-link" onclick='goToMemberCard("${n}")' title="クリックでメンバーカードへ">${escapeHtml(n)}</span> <button class="icon-btn editor-only" onclick="removeFromList('onboarding',${i})">×</button></span>`).join("")}
       </div>
       <div class="warn">オンボ期間：1ヶ月。終了後にプロジェクト or コミュニティ運営へ移行。</div>
     </div>
@@ -1286,7 +1312,7 @@ function renderUnassignedCard() {
       <div class="card-head"><div class="card-title">未アサイン</div>
         <button class="btn editor-only" onclick="addToList('unassigned')">+ 追加</button></div>
       <div class="unassigned-list">
-        ${state.unassigned.map((n,i)=>`<span class="chip">${escapeHtml(n)} <button class="icon-btn editor-only" onclick="removeFromList('unassigned',${i})">×</button></span>`).join("")}
+        ${state.unassigned.map((n,i)=>`<span class="chip"><span class="name-link" onclick='goToMemberCard("${n}")' title="クリックでメンバーカードへ">${escapeHtml(n)}</span> <button class="icon-btn editor-only" onclick="removeFromList('unassigned',${i})">×</button></span>`).join("")}
       </div>
     </div>
   `;
@@ -1315,7 +1341,7 @@ function kpiDeptTotal(d) {
 function renderKpiDept(d, i) {
   const leadRows = (d.lead||[]).map((m, li) => `
     <div class="slot" ${reorderData({type:"kpiDeptLead", di:i}, li)}>
-      <div><div class="name" onclick='editSlotMember({type:"kpiDeptLead",di:${i}},${li})' title="クリックで編集" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+      <div><div class="name name-link" onclick='goToMemberCard("${m.name}")' title="クリックでメンバーカードへ">${escapeHtml(m.name)}</div></div>
       <div style="display:flex;align-items:center;gap:6px">
         <span class="tag editable" onclick='editSlotMember({type:"kpiDeptLead",di:${i}},${li})' title="クリックで編集">${escapeHtml(m.role)}</span>
         <button class="icon-btn editor-only" onclick="removeKpiDeptLead(${i},${li})">×</button>
@@ -1344,7 +1370,7 @@ function renderKpiGroupNode(node, deptIdx, path, depth) {
   const titleClass = depth === 0 ? "group-title" : "subgroup-title";
   const memberRows = (node.members||[]).map((m, mi) => `
     <div class="slot" ${reorderData({type:"kpiGroupMembers", di:deptIdx, path}, mi)}>
-      <div><div class="name" onclick='editSlotMember({type:"kpiGroupMembers",di:${deptIdx},path:${pathStr}},${mi})' title="クリックで編集" style="cursor:pointer">${escapeHtml(m.name)}</div></div>
+      <div><div class="name name-link" onclick='goToMemberCard("${m.name}")' title="クリックでメンバーカードへ">${escapeHtml(m.name)}</div></div>
       <div style="display:flex;align-items:center;gap:6px">
         <span class="tag editable" onclick='editSlotMember({type:"kpiGroupMembers",di:${deptIdx},path:${pathStr}},${mi})' title="クリックで編集">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
         <button class="icon-btn editor-only" onclick='removeKpiGroupNodeMember(${deptIdx},${pathStr},${mi})'>×</button>
