@@ -1671,6 +1671,7 @@ function renderMemberCard(n, info) {
         ${info.onbo?'<span class="tag" style="background:var(--orange);color:var(--orange-text)">オンボ</span>':''}
         ${info.unassigned?'<span class="tag" style="background:var(--pink);color:var(--pink-text)">未アサイン</span>':''}
       </div>
+      ${contractRemainingHTML(mi.contractStartDate)}
       ${profileField("経験", mi.experience)}
       ${profileField("スキル", mi.skills)}
       ${profileField("できること", mi.canDo)}
@@ -2032,6 +2033,29 @@ function cycleContractStatus(name) {
   );
   save(); render();
 }
+
+// 契約期間（1年ごとに自動更新）の残り日数。contractStartDate（契約締結日 or 直近更新日）を起算点に、
+// 今日以降で最も近い「毎年の応当日」を次回更新日とみなして計算する。
+function contractRenewalInfo(contractStartDate) {
+  if (!contractStartDate) return null;
+  const start = new Date(contractStartDate + "T00:00:00");
+  if (isNaN(start.getTime())) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let next = new Date(today.getFullYear(), start.getMonth(), start.getDate());
+  if (next < today) next.setFullYear(next.getFullYear() + 1);
+  const days = Math.round((next - today) / 86400000);
+  const nextLabel = `${next.getFullYear()}/${next.getMonth()+1}/${next.getDate()}`;
+  return { days, nextLabel };
+}
+function contractRemainingHTML(contractStartDate) {
+  const info = contractRenewalInfo(contractStartDate);
+  const value = info ? `残り${info.days}日（次回更新日: ${info.nextLabel}）` : "";
+  return `
+    <div class="section-label">残り契約期間</div>
+    <div style="font-size:13px;line-height:1.6;margin-bottom:10px;color:${value ? "var(--text)" : "var(--muted)"}">${value ? escapeHtml(value) : "未設定"}</div>
+  `;
+}
 function editMember(name) {
   const current = memberInfo(name) || { university: "", area: "" };
   const areaOpts = AREA_LIST.map(a => `<option value="${a}"${current.area===a?" selected":""}>${a}</option>`).join("");
@@ -2046,6 +2070,8 @@ function editMember(name) {
     </select>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">名前</label>
     <input id="em-name" value="${escapeHtml(name)}" placeholder="名前を変更する場合のみ書き換え"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">契約開始日（1年ごとに自動更新）</label>
+    <input id="em-contract-start" type="date" value="${escapeHtml(current.contractStartDate||"")}"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">経験</label>
     <textarea id="em-experience" rows="2" placeholder="これまでの経験（インターン・部活・制作物など）">${escapeHtml(current.experience||"")}</textarea>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">スキル</label>
@@ -2064,6 +2090,7 @@ function saveMemberEdit(oldName) {
   const univ = (document.getElementById("em-univ").value||"").trim();
   const area = document.getElementById("em-area").value;
   const newName = (document.getElementById("em-name").value||"").trim() || oldName;
+  const contractStartDate = document.getElementById("em-contract-start").value || "";
   const experience = (document.getElementById("em-experience").value||"").trim();
   const skills = (document.getElementById("em-skills").value||"").trim();
   const canDo = (document.getElementById("em-cando").value||"").trim();
@@ -2102,10 +2129,10 @@ function saveMemberEdit(oldName) {
   // プロフィール情報のoverride保存（契約状況・BSバッジは編集フォーム対象外なので保持する）
   const contractStatus = (state.memberOverrides[newName] || {}).contractStatus;
   const isBS = (state.memberOverrides[newName] || {}).isBS;
-  if (!univ && !area && !experience && !skills && !canDo && !wantToDo && !contractStatus && !isBS) {
+  if (!univ && !area && !contractStartDate && !experience && !skills && !canDo && !wantToDo && !contractStatus && !isBS) {
     delete state.memberOverrides[newName];
   } else {
-    state.memberOverrides[newName] = { university: univ, area: area, experience, skills, canDo, wantToDo, contractStatus, isBS };
+    state.memberOverrides[newName] = { university: univ, area: area, contractStartDate, experience, skills, canDo, wantToDo, contractStatus, isBS };
   }
   save(); closeModal(); render();
 }
