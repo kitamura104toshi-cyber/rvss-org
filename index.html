@@ -325,6 +325,7 @@
     <div id="toolbar-left"></div>
     <div>
       <button class="btn" onclick="exportJSON()">JSONエクスポート</button>
+      <button class="btn editor-only" id="sheets-backup-btn" onclick="backupToSheets()">Google Sheetsへバックアップ</button>
       <button class="btn editor-only" onclick="resetData()">初期化</button>
     </div>
   </div>
@@ -832,6 +833,28 @@ function exportJSON() {
   a.href = URL.createObjectURL(blob);
   a.download = "rvss-org-" + new Date().toISOString().slice(0,10) + ".json";
   a.click();
+}
+
+// Google Sheetsへ手動バックアップ（1日1回の自動実行とは別に、いつでも押せる）
+async function backupToSheets() {
+  const btn = document.getElementById("sheets-backup-btn");
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "バックアップ中…";
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/sheets-backup`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${SUPABASE_ANON_KEY}`, "apikey": SUPABASE_ANON_KEY },
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    btn.textContent = "✅ バックアップ完了";
+  } catch (e) {
+    console.error(e);
+    btn.textContent = "❌ 失敗（詳細はコンソール参照）";
+  } finally {
+    setTimeout(() => { btn.textContent = originalLabel; btn.disabled = false; }, 3000);
+  }
 }
 
 // ====== タブ ======
@@ -2170,6 +2193,7 @@ const EDIT_FNS = [
   "addKpiDept","renameKpiDept","addKpiDeptLead","removeKpiDeptLead",
   "addKpiGroup","renameKpiGroupNode","deleteKpiGroupNode","addKpiGroupNodeMember","removeKpiGroupNodeMember","addKpiGroupNodeChild",
   "resetData",
+  "backupToSheets",
 ];
 if (!isEditMode) {
   EDIT_FNS.forEach(fn => {
