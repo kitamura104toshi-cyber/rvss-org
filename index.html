@@ -686,11 +686,11 @@ function onAllSkillChange(v) {
 // これにより「本番用キーへの戻し忘れ」による事故を防ぐ。
 const IS_LOCAL_DEV = ["localhost", "127.0.0.1"].includes(location.hostname);
 
-const PROD_SUPABASE_URL = "https://uilequglcrsenknzwmky.supabase.co";
-const PROD_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVpbGVxdWdsY3JzZW5rbnp3bWt5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwNzU0MzgsImV4cCI6MjA5ODY1MTQzOH0.kzqb8trPTbrFx_Jc_iwRAPN9nzxYahYuK2Vxkro__ro";
+const PROD_SUPABASE_URL = "https://dbrwsrrfmpnvpzxcdupp.supabase.co";
+const PROD_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRicndzcnJmbXBudnB6eGNkdXBwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyNjQyNjAsImV4cCI6MjA5ODg0MDI2MH0.vhD6bvl8qzgBK5T_k9PgkxJCVUwieLSa2kFnUgdpaCs";
 
-const DEV_SUPABASE_URL = "https://dbrwsrrfmpnvpzxcdupp.supabase.co";
-const DEV_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRicndzcnJmbXBudnB6eGNkdXBwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyNjQyNjAsImV4cCI6MjA5ODg0MDI2MH0.vhD6bvl8qzgBK5T_k9PgkxJCVUwieLSa2kFnUgdpaCs";
+const DEV_SUPABASE_URL = "https://vsqrgcsobweaupiabagu.supabase.co";
+const DEV_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZzcXJnY3NvYndlYXVwaWFiYWd1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2MDg5ODEsImV4cCI6MjA5OTE4NDk4MX0.49CQgEGOlZv4YUw0Vd7uDc89Tw3OvQsvs3e4vCTSxWo";
 
 const SUPABASE_URL = IS_LOCAL_DEV ? DEV_SUPABASE_URL : PROD_SUPABASE_URL;
 const SUPABASE_ANON_KEY = IS_LOCAL_DEV ? DEV_SUPABASE_ANON_KEY : PROD_SUPABASE_ANON_KEY;
