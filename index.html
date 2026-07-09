@@ -864,7 +864,7 @@ const BASE_TABS = [
   { id: "community", label: "コミュニティ運営" },
   { id: "schools", label: "スクール受講者" },
   { id: "onbo", label: "オンボーディング" },
-  { id: "unassigned", label: "未アサイン" },
+  { id: "lowWorkload", label: "稼働余裕あり" },
   { id: "all", label: "全メンバー" },
   { id: "kpi", label: "KPI管理者" },
 ];
@@ -906,12 +906,16 @@ function getStats() {
     }
   });
   const totalCount = Array.from(allMembers).filter(n => !isBSMember(n)).length;
+  const lowWorkloadCount = Array.from(allMembers).filter(n => {
+    const hours = (memberInfo(n) || {}).lastMonthHours;
+    return typeof hours === "number" && hours < LOW_WORKLOAD_THRESHOLD_HOURS;
+  }).length;
   return {
     projects: state.projects.length,
     pjAssign: pjAssigned.size,
     community: communityNames.size,
     onbo: state.onboarding.length,
-    unassigned: state.unassigned.length,
+    lowWorkload: lowWorkloadCount,
     total: totalCount,
   };
 }
@@ -931,7 +935,7 @@ function renderStats() {
     { num: s.pjAssign,   lbl: "プロジェクト" },
     { num: s.community,  lbl: "組織運営" },
     { num: s.onbo,       lbl: "オンボ中" },
-    { num: s.unassigned, lbl: "未アサイン" },
+    { num: s.lowWorkload, lbl: "稼働余裕あり" },
   ];
   document.getElementById("stats").innerHTML = items.map(i =>
     `<div class="stat"><div class="num">${i.num}</div><div class="lbl">${i.lbl}</div></div>`
@@ -982,8 +986,8 @@ function renderContent() {
     el.innerHTML = `<div class="grid">${state.schools.map(renderSchool).join("")}</div>`;
   } else if (currentTab === "onbo") {
     el.innerHTML = renderOnboCard();
-  } else if (currentTab === "unassigned") {
-    el.innerHTML = renderUnassignedCard();
+  } else if (currentTab === "lowWorkload") {
+    el.innerHTML = renderLowWorkloadCard();
   } else if (currentTab === "all") {
     tb.innerHTML = `
       <input class="search" id="search" placeholder="メンバー検索（名前・経験・スキル・できること・やりたいこと）…" value="${escapeHtml(allFilterSearch)}" oninput="onAllSearchInput(this.value)" style="min-width:260px"/>
@@ -1360,14 +1364,28 @@ function renderOnboCard() {
     </div>
   `;
 }
-function renderUnassignedCard() {
+// 前月稼働時間が閾値未満のメンバーを自動抽出して表示する（手動での追加/削除はしない派生ビュー）
+const LOW_WORKLOAD_THRESHOLD_HOURS = 60;
+function renderLowWorkloadCard() {
+  const map = buildMemberMap();
+  const rows = Object.keys(map)
+    .filter(n => !isDeleted(n))
+    .map(n => ({ n, hours: (memberInfo(n) || {}).lastMonthHours }))
+    .filter(r => typeof r.hours === "number" && r.hours < LOW_WORKLOAD_THRESHOLD_HOURS)
+    .sort((a, b) => a.hours - b.hours);
+  const items = rows.map(r => `
+    <span class="chip">
+      <span class="name-link" onclick='goToMemberCard("${r.n}")' title="クリックでメンバーカードへ">${escapeHtml(r.n)}</span>
+      <span style="color:var(--muted);margin-left:4px">${r.hours}h</span>
+    </span>
+  `).join("");
   return `
     <div class="card">
-      <div class="card-head"><div class="card-title">未アサイン</div>
-        <button class="btn editor-only" onclick="addToList('unassigned')">+ 追加</button></div>
+      <div class="card-head"><div class="card-title">稼働余裕あり（前月稼働${LOW_WORKLOAD_THRESHOLD_HOURS}時間未満・${rows.length}名）</div></div>
       <div class="unassigned-list">
-        ${state.unassigned.map((n,i)=>`<span class="chip"><span class="name-link" onclick='goToMemberCard("${n}")' title="クリックでメンバーカードへ">${escapeHtml(n)}</span> <button class="icon-btn editor-only" onclick="removeFromList('unassigned',${i})">×</button></span>`).join("")}
+        ${items || '<span style="font-size:13px;color:var(--muted)">該当メンバーはいません</span>'}
       </div>
+      <div class="warn">前月稼働時間はNotionの稼働管理表と連携して自動反映されます（各メンバーカードにも表示されます）。</div>
     </div>
   `;
 }
@@ -1524,7 +1542,7 @@ function addKpiGroupNodeChild(deptIdx, path) {
 // 全メンバーごとに「プロジェクト/コミュニティ運営/スクール/オンボ/未アサイン」を集計したマップを返す
 function buildMemberMap() {
   const map = {};
-  const ensure = (n) => { if(!map[n]) map[n]={pjs:[],depts:[],onbo:false,unassigned:false,schools:[]}; if(!map[n].schools) map[n].schools=[]; return map[n]; };
+  const ensure = (n) => { if(!map[n]) map[n]={pjs:[],depts:[],onbo:false,schools:[]}; if(!map[n].schools) map[n].schools=[]; return map[n]; };
   state.members.forEach(n => { if (!isDeleted(n)) ensure(n); });
   // Google Sheets由来のメンバーも追加（未登録分・未削除分）
   Object.keys(MEMBER_INFO).forEach(n => {
@@ -1551,7 +1569,6 @@ function buildMemberMap() {
     s.students.forEach(n => add(n, "受講"));
   });
   state.onboarding.forEach(n => { ensure(n).onbo=true; });
-  state.unassigned.forEach(n => { ensure(n).unassigned=true; });
   return map;
 }
 
@@ -1702,9 +1719,10 @@ function renderMemberCard(n, info) {
         ${info.depts.map(d=>`<span class="tag">${escapeHtml(d)}</span>`).join(" ")}
         ${(info.schools||[]).map(s=>`<span class="tag" style="background:var(--purple);color:var(--purple-text)">スクール:${escapeHtml(s)}</span>`).join(" ")}
         ${info.onbo?'<span class="tag" style="background:var(--orange);color:var(--orange-text)">オンボ</span>':''}
-        ${info.unassigned?'<span class="tag" style="background:var(--pink);color:var(--pink-text)">未アサイン</span>':''}
+        ${(typeof mi.lastMonthHours === "number" && mi.lastMonthHours < LOW_WORKLOAD_THRESHOLD_HOURS) ? '<span class="tag" style="background:var(--green,#e6f4ea);color:var(--green-text,#2f7d4a)">稼働余裕あり</span>' : ''}
       </div>
       ${contractRemainingHTML(mi.contractStartDate)}
+      ${workloadHTML(mi.lastMonthHours)}
       ${profileField("経験", mi.experience)}
       ${profileField("スキル", mi.skills)}
       ${profileField("できること", mi.canDo)}
@@ -2029,7 +2047,6 @@ function deleteMember(name) {
       s.students = s.students.filter(n => n !== name);
     });
     state.onboarding = state.onboarding.filter(n => n !== name);
-    state.unassigned = state.unassigned.filter(n => n !== name);
     if (state.memberOverrides && state.memberOverrides[name]) delete state.memberOverrides[name];
     save(); render();
   });
@@ -2089,6 +2106,15 @@ function contractRemainingHTML(contractStartDate) {
     <div style="font-size:13px;line-height:1.6;margin-bottom:10px;color:${value ? "var(--text)" : "var(--muted)"}">${value ? escapeHtml(value) : "未設定"}</div>
   `;
 }
+// 前月稼働時間（Notionの稼働管理表と連携して自動反映される想定。手動編集も可）
+function workloadHTML(lastMonthHours) {
+  const has = typeof lastMonthHours === "number";
+  const value = has ? `${lastMonthHours}時間` : "";
+  return `
+    <div class="section-label">前月稼働時間</div>
+    <div style="font-size:13px;line-height:1.6;margin-bottom:10px;color:${value ? "var(--text)" : "var(--muted)"}">${value ? escapeHtml(value) : "未設定"}</div>
+  `;
+}
 function editMember(name) {
   const current = memberInfo(name) || { university: "", area: "" };
   const areaOpts = AREA_LIST.map(a => `<option value="${a}"${current.area===a?" selected":""}>${a}</option>`).join("");
@@ -2105,6 +2131,8 @@ function editMember(name) {
     <input id="em-name" value="${escapeHtml(name)}" placeholder="名前を変更する場合のみ書き換え"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">契約開始日（1年ごとに自動更新）</label>
     <input id="em-contract-start" type="date" value="${escapeHtml(current.contractStartDate||"")}"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">前月稼働時間（h）｜通常はNotionと連携して自動更新</label>
+    <input id="em-workload" type="number" min="0" step="0.5" value="${current.lastMonthHours!=null?current.lastMonthHours:""}" placeholder="例：45"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">経験</label>
     <textarea id="em-experience" rows="2" placeholder="これまでの経験（インターン・部活・制作物など）">${escapeHtml(current.experience||"")}</textarea>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">スキル</label>
@@ -2124,6 +2152,8 @@ function saveMemberEdit(oldName) {
   const area = document.getElementById("em-area").value;
   const newName = (document.getElementById("em-name").value||"").trim() || oldName;
   const contractStartDate = document.getElementById("em-contract-start").value || "";
+  const workloadRaw = document.getElementById("em-workload").value;
+  const lastMonthHours = workloadRaw === "" ? null : Number(workloadRaw);
   const experience = (document.getElementById("em-experience").value||"").trim();
   const skills = (document.getElementById("em-skills").value||"").trim();
   const canDo = (document.getElementById("em-cando").value||"").trim();
@@ -2156,16 +2186,16 @@ function saveMemberEdit(oldName) {
       s.students = s.students.map(n => n === oldName ? newName : n);
     });
     state.onboarding = state.onboarding.map(n => n === oldName ? newName : n);
-    state.unassigned = state.unassigned.map(n => n === oldName ? newName : n);
   }
 
-  // プロフィール情報のoverride保存（契約状況・BSバッジは編集フォーム対象外なので保持する）
+  // プロフィール情報のoverride保存（契約状況・BSバッジ・スキル分類は編集フォーム対象外なので保持する）
   const contractStatus = (state.memberOverrides[newName] || {}).contractStatus;
   const isBS = (state.memberOverrides[newName] || {}).isBS;
-  if (!univ && !area && !contractStartDate && !experience && !skills && !canDo && !wantToDo && !contractStatus && !isBS) {
+  const skillCategories = (state.memberOverrides[newName] || {}).skillCategories;
+  if (!univ && !area && !contractStartDate && lastMonthHours == null && !experience && !skills && !canDo && !wantToDo && !contractStatus && !isBS && !skillCategories) {
     delete state.memberOverrides[newName];
   } else {
-    state.memberOverrides[newName] = { university: univ, area: area, contractStartDate, experience, skills, canDo, wantToDo, contractStatus, isBS };
+    state.memberOverrides[newName] = { university: univ, area: area, contractStartDate, lastMonthHours, experience, skills, canDo, wantToDo, contractStatus, isBS, skillCategories };
   }
   save(); closeModal(); render();
 }
