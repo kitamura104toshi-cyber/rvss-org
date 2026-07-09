@@ -887,7 +887,10 @@ function isBSMember(n) {
 }
 function getStats() {
   const pjAssigned = new Set();
-  state.projects.forEach(p => (p.students||[]).forEach(m => { if (!isBSMember(m.name)) pjAssigned.add(m.name); }));
+  state.projects.forEach(p => {
+    (p.students||[]).forEach(m => { if (!isBSMember(m.name)) pjAssigned.add(m.name); });
+    (p.groups||[]).forEach(g => (g.members||[]).forEach(m => { if (!isBSMember(m.name)) pjAssigned.add(m.name); }));
+  });
   const communityNames = new Set();
   state.departments.forEach(d => {
     (d.lead||[]).forEach(m => { if (!isBSMember(m.name)) communityNames.add(m.name); });
