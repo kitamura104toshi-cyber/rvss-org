@@ -682,6 +682,14 @@ function onAllSkillChange(v) {
   if (el) el.innerHTML = renderAll();
 }
 
+// 全メンバータブの契約状況フィルター（"" = すべて）
+let allFilterContract = "";
+function onAllContractChange(v) {
+  allFilterContract = (allFilterContract === v) ? "" : v;
+  const el = document.getElementById("content");
+  if (el) el.innerHTML = renderAll();
+}
+
 // ====== Supabase 初期化 ======
 // localhost/127.0.0.1 で開いた場合は開発用プロジェクト、それ以外（本番デプロイ先）は本番プロジェクトに自動で接続する。
 // これにより「本番用キーへの戻し忘れ」による事故を防ぐ。
@@ -1630,6 +1638,19 @@ function renderAll() {
     return `<span class="tag" style="${style}" onclick="onAllSkillChange('${c.name}')" title="${escapeHtml(c.keywords.join('・'))}">${c.name} ${count}</span>`;
   }).join(" ");
 
+  // 契約状況フィルター
+  const contractCounts = {};
+  Object.keys(map).forEach(n => {
+    const s = CONTRACT_STATUSES.includes((memberInfo(n)||{}).contractStatus) ? (memberInfo(n)||{}).contractStatus : "none";
+    contractCounts[s] = (contractCounts[s]||0) + 1;
+  });
+  const contractSummary = CONTRACT_STATUSES.map(s => {
+    const active = allFilterContract === s;
+    const count = contractCounts[s] || 0;
+    const style = `background:${active?'#2a2a2a':'#fff'};color:${active?'#fff':'#6b6b6b'};border:1px solid ${active?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${active?'font-weight:700':''}`;
+    return `<span class="tag" style="${style}" onclick="onAllContractChange('${s}')">${CONTRACT_STATUS_LABELS[s]} ${count}</span>`;
+  }).join(" ");
+
   const filtered = Object.entries(map)
     .filter(([n]) => {
       if (!q) return true;
@@ -1644,6 +1665,12 @@ function renderAll() {
     })
     .filter(([n, info]) => !assignDef || assignDef.test(info, n))
     .filter(([n]) => !allFilterSkill || hasSkillCategory(n, allFilterSkill))
+    .filter(([n]) => {
+      if (!allFilterContract) return true;
+      const mi = memberInfo(n);
+      const s = CONTRACT_STATUSES.includes((mi||{}).contractStatus) ? mi.contractStatus : "none";
+      return s === allFilterContract;
+    })
     .sort(([a],[b]) => a.localeCompare(b,"ja"));
 
   // BSメンバー（学生メンバーではないため別枠にする。件数表示からも除く）
@@ -1671,7 +1698,7 @@ function renderAll() {
     </div>
   ` : "";
 
-  const filterNote = [allFilterArea, assignDef && assignDef.label, allFilterSkill].filter(Boolean).join(" / ");
+  const filterNote = [allFilterArea, assignDef && assignDef.label, allFilterSkill, allFilterContract && CONTRACT_STATUS_LABELS[allFilterContract]].filter(Boolean).join(" / ");
   const titleText = filterNote
     ? `全メンバー（${regularFiltered.length} / 総${totalRegular}名） — ${filterNote}`
     : `全メンバー（${totalRegular}名）`;
@@ -1685,9 +1712,13 @@ function renderAll() {
         <span style="font-size:12px;color:var(--muted);margin-right:6px">アサイン状況:</span>${assignSummary}
         ${allFilterAssign ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllAssignChange('${allFilterAssign}')">絞り込みを解除</span>` : ""}
       </div>
-      <div style="margin-bottom:0;line-height:2">
+      <div style="margin-bottom:10px;line-height:2">
         <span style="font-size:12px;color:var(--muted);margin-right:6px">スキル:</span>${skillSummary}
         ${allFilterSkill ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllSkillChange('${allFilterSkill}')">絞り込みを解除</span>` : ""}
+      </div>
+      <div style="margin-bottom:0;line-height:2">
+        <span style="font-size:12px;color:var(--muted);margin-right:6px">契約状況:</span>${contractSummary}
+        ${allFilterContract ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllContractChange('${allFilterContract}')">絞り込みを解除</span>` : ""}
       </div>
     </div>
     ${cards ? `<div class="grid">${cards}</div>` : '<div class="warn">該当メンバーがいません</div>'}
@@ -2061,16 +2092,16 @@ function restoreMember(name) {
   }
   save(); render();
 }
-const CONTRACT_STATUSES = ["none", "sent", "nda"];
-const CONTRACT_STATUS_LABELS = { none: "未締結", sent: "契約書送付済み", nda: "NDA締結済み" };
+const CONTRACT_STATUSES = ["none", "nda", "contract"];
+const CONTRACT_STATUS_LABELS = { none: "未締結", nda: "NDA締結済み", contract: "業務委託契約締結済み" };
 const CONTRACT_STATUS_STYLES = {
   none: "background:#fff;color:#6b6b6b;border:1px solid #e5e3dc",
-  sent: "background:var(--orange);color:var(--orange-text)",
-  nda: "background:var(--green,#e6f4ea);color:var(--green-text,#2f7d4a)"
+  nda: "background:var(--green,#e6f4ea);color:var(--green-text,#2f7d4a)",
+  contract: "background:var(--blue,#e8f0fe);color:var(--blue-text,#1a56c4)"
 };
 function contractStatusTagHTML(name, status) {
   const s = CONTRACT_STATUSES.includes(status) ? status : "none";
-  const icon = s === "nda" ? "✅ " : s === "sent" ? "📤 " : "";
+  const icon = s === "contract" ? "✅ " : s === "nda" ? "📤 " : "";
   return `<span class="tag editable" style="${CONTRACT_STATUS_STYLES[s]}" onclick="cycleContractStatus('${name}')" title="クリックで次のステータスへ">${icon}${CONTRACT_STATUS_LABELS[s]}</span>`;
 }
 function cycleContractStatus(name) {
