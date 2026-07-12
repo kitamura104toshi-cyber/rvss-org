@@ -1595,11 +1595,10 @@ function renderAll() {
     ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllAreaChange('')">エリア絞り込みを解除</span>`
     : "";
 
-  // アサイン状況フィルター（「どこにも未所属」はBSメンバー〈学生ではないメンター等〉を対象外にする）
+  // アサイン状況フィルター
   const assignDefs = [
-    { id: "noPj",        label: "プロジェクト未所属", test: (i, n) => i.pjs.length === 0 && !isBSMember(n) },
-    { id: "noCommunity", label: "コミュニティ運営なし", test: (i, n) => i.depts.length === 0 && !isBSMember(n) },
-    { id: "noAny",       label: "どこにも未所属",     test: (i, n) => i.pjs.length === 0 && i.depts.length === 0 && (i.schools||[]).length === 0 && !isBSMember(n) },
+    { id: "hasPj",        label: "プロジェクト所属", test: (i, n) => i.pjs.length > 0 },
+    { id: "hasCommunity", label: "コミュニティ運営", test: (i, n) => i.depts.length > 0 },
   ];
   const assignDef = assignDefs.find(d => d.id === allFilterAssign);
   const assignSummary = assignDefs.map(d => {
