@@ -874,7 +874,7 @@ const BASE_TABS = [
   { id: "onbo", label: "オンボーディング" },
   { id: "lowWorkload", label: "稼働余裕あり" },
   { id: "all", label: "全メンバー" },
-  { id: "kpi", label: "KPI管理者" },
+  { id: "kpi", label: "新体制" },
 ];
 function getTabs() {
   return BASE_TABS.concat(state.customTabs.map(t => ({ id: t.id, label: t.label, custom: true })));
@@ -1404,7 +1404,7 @@ function renderLowWorkloadCard() {
 // ====== KPI責任範囲・担当者マップ ======
 // 部署カードの見た目は「コミュニティ運営」タブと同じ group-box/subgroup-box を流用しつつ、
 // グループは無制限に入れ子にできる再帰構造にしている（環境>インプット>基礎カリキュラム のようにいくらでも深くできる）。
-// 担当者は正式なメンバー名簿に限らないため、pickMember ではなく自由入力にしている。
+// 担当者はプロジェクトの担当者追加と同様、既存メンバーからの選択式（pickMember）にしている。
 // pathはKPI部署 d.groups をルートとした子インデックスの配列（例：[2,1,0]）
 function getKpiGroupNode(dept, path) {
   let node = { children: dept.groups };
@@ -1492,12 +1492,12 @@ function renameKpiDept(idx) {
   });
 }
 function addKpiDeptLead(idx) {
+  const exclude = state.kpiDepts[idx].lead.map(m => m.name);
   inputDialog("役割（例：統括、補佐）", "統括", (role) => {
-    inputDialog("担当者名", "", (name) => {
-      if (!name || !name.trim()) return;
-      state.kpiDepts[idx].lead.push({ name: name.trim(), role: role || "統括" });
+    pickMember("担当者を選択", (name) => {
+      state.kpiDepts[idx].lead.push({ name, role: role || "統括" });
       save(); render();
-    });
+    }, exclude);
   });
 }
 function removeKpiDeptLead(idx, li) {
@@ -1527,13 +1527,13 @@ function deleteKpiGroupNode(deptIdx, path) {
   });
 }
 function addKpiGroupNodeMember(deptIdx, path) {
+  const exclude = getKpiGroupNode(state.kpiDepts[deptIdx], path).members.map(m => m.name);
   inputDialog("役割（任意。空欄で担当者のみ）", "", (role) => {
-    inputDialog("担当者名", "", (name) => {
-      if (!name || !name.trim()) return;
+    pickMember("担当者を選択", (name) => {
       const node = getKpiGroupNode(state.kpiDepts[deptIdx], path);
-      node.members.push({ name: name.trim(), role });
+      node.members.push({ name, role });
       save(); render();
-    });
+    }, exclude);
   });
 }
 function removeKpiGroupNodeMember(deptIdx, path, mi) {
