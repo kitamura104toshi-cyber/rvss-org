@@ -1638,11 +1638,12 @@ function renderAll() {
     return `<span class="tag" style="${style}" onclick="onAllSkillChange('${c.name}')" title="${escapeHtml(c.keywords.join('・'))}">${c.name} ${count}</span>`;
   }).join(" ");
 
-  // 契約状況フィルター（NDA・業務委託契約は独立管理なので両方に該当することもある）
+  // 契約状況フィルター（NDA・業務委託契約は独立管理なので、それぞれ未締結/締結済みを独立したチップにする）
   const CONTRACT_FILTERS = [
-    { id: "none",     label: "未締結",           test: mi => !mi.ndaSigned && !mi.outsourcingSigned },
-    { id: "nda",      label: "NDA締結済み",       test: mi => !!mi.ndaSigned },
-    { id: "contract", label: "業務委託契約締結済み", test: mi => !!mi.outsourcingSigned },
+    { id: "ndaNone",        label: "NDA未締結",         test: mi => !mi.ndaSigned },
+    { id: "ndaDone",        label: "NDA締結済み",       test: mi => !!mi.ndaSigned },
+    { id: "contractNone",   label: "業務委託契約未締結", test: mi => !mi.outsourcingSigned },
+    { id: "contractDone",   label: "業務委託契約締結済み", test: mi => !!mi.outsourcingSigned },
   ];
   const contractSummary = CONTRACT_FILTERS.map(f => {
     const active = allFilterContract === f.id;
