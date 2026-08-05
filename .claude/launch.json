@@ -6,6 +6,12 @@
       "runtimeExecutable": "powershell",
       "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".claude/static-server.ps1"],
       "port": 5173
+    },
+    {
+      "name": "mention-inbox",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".claude/mention-inbox-dev.ps1"],
+      "port": 3100
     }
   ]
 }
