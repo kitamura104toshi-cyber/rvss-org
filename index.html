@@ -313,6 +313,12 @@
     border-radius: 8px; font-size: 14px; min-width: 200px;
     font-family: inherit;
   }
+
+  /* ===== プロジェクト募集状況 ===== */
+  .sync-note { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+  .info-row { display: flex; gap: 8px; font-size: 13px; padding: 3px 0; }
+  .info-row .k { flex: 0 0 76px; font-size: 12px; color: var(--muted); padding-top: 2px; }
+  .info-row .v { flex: 1; min-width: 0; word-break: break-word; }
 </style>
 </head>
 <body>
@@ -769,6 +775,9 @@ function ensureFields(s) {
   if (!s.memberOverrides) s.memberOverrides = {};
   if (!s.customTabs) s.customTabs = [];
   if (!s.kpiDepts) s.kpiDepts = JSON.parse(JSON.stringify(KPI_DEPTS_SEED));
+  // 募集状況は sheets-recruitment-sync（Edge Function）が書き込む読み取り専用データ。
+  // アプリ側からは編集しないため、未同期でも落ちないよう空で初期化しておく。
+  if (!s.recruitment) s.recruitment = { syncedAt: "", rows: [] };
   (s.projects || []).forEach(p => {
     p.mentors = normalizeMemberList(p.mentors);
     p.students = normalizeMemberList(p.students);
@@ -865,10 +874,37 @@ async function backupToSheets() {
   }
 }
 
+// 募集フォームの回答シートを手動で取り込む（5時間おきの自動実行とは別に、いつでも押せる）
+async function syncRecruitment() {
+  const btn = document.getElementById("recruit-sync-btn");
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "取得中…";
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/sheets-recruitment-sync`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${SUPABASE_ANON_KEY}`, "apikey": SUPABASE_ANON_KEY },
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    // Edge Function が org_state を直接更新するため、最新のクラウド側の値を読み直す
+    const { data: row, error } = await sb.from("org_state").select("data").eq("id", ROW_ID).maybeSingle();
+    if (error) throw error;
+    if (row) applyRemote(row.data);
+    btn.textContent = `✅ ${data.rows}件を取得`;
+  } catch (e) {
+    console.error(e);
+    btn.textContent = "❌ 失敗（詳細はコンソール参照）";
+  } finally {
+    setTimeout(() => { btn.textContent = originalLabel; btn.disabled = false; }, 3000);
+  }
+}
+
 // ====== タブ ======
 let currentTab = "projects";
 const BASE_TABS = [
   { id: "projects", label: "プロジェクト" },
+  { id: "recruit", label: "プロジェクト募集状況" },
   { id: "community", label: "コミュニティ運営" },
   { id: "schools", label: "スクール受講者" },
   { id: "onbo", label: "オンボーディング" },
@@ -989,6 +1025,12 @@ function renderContent() {
   if (currentTab === "projects") {
     tb.innerHTML = `<button class="btn primary editor-only" onclick="addProject()">+ プロジェクトを追加</button>`;
     el.innerHTML = `<div class="grid">${state.projects.map(renderProject).join("")}</div>`;
+  } else if (currentTab === "recruit") {
+    tb.innerHTML = `
+      <button class="btn editor-only" id="recruit-sync-btn" onclick="syncRecruitment()">スプレッドシートから今すぐ取得</button>
+      <a class="btn" href="${RECRUIT_SHEET_URL}" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block;margin-left:6px">募集フォームのシートを開く</a>
+    `;
+    el.innerHTML = renderRecruit();
   } else if (currentTab === "community") {
     tb.innerHTML = `<button class="btn primary editor-only" onclick="addDept()">+ 部署を追加</button>`;
     el.innerHTML = `<div class="grid">${state.departments.map(renderDept).join("")}</div>`;
@@ -1073,6 +1115,150 @@ function slot(name, role, removeFn, reorderRef, reorderIdx) {
       <button class="icon-btn editor-only" onclick="${removeFn()}">×</button>
     </div>
   </div>`;
+}
+
+// ====== プロジェクト募集状況 ======
+// 学生募集フォーム（Googleフォーム）の回答シートを sheets-recruitment-sync が5時間おきに取り込み、
+// state.recruitment に格納する。このタブはその読み取り専用ビュー。編集はシート側で行う運用。
+const RECRUIT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1DcALjQGfuExjzCMC5BIQdQWu0g1wI_phovmTsWtka44/edit";
+
+// カードの並び順。学生を募集している最中のもの（募集中・再募集中・応募待ち）を常に最上位に置く。
+// 同じステータス内の並びはプロジェクトの登録順のまま。
+const RECRUIT_STATUS_ORDER = [
+  "募集中", "再募集中", "応募待ち",
+  "応募あり", "PJ連携中", "アサイン確定",
+  "辞退", "アサイン済み", "未募集",
+];
+const RECRUIT_STATUS_STYLE = {
+  "未募集":       "background:#f0eee7;color:#6b6b6b",
+  "募集中":       "background:var(--orange);color:var(--orange-text)",
+  "応募待ち":     "background:var(--orange);color:var(--orange-text)",
+  "応募あり":     "background:var(--green);color:var(--green-text)",
+  "辞退":         "background:var(--pink);color:var(--pink-text)",
+  "再募集中":     "background:var(--pink);color:var(--pink-text)",
+  "PJ連携中":     "background:var(--blue);color:var(--blue-text)",
+  "アサイン確定": "background:var(--purple);color:var(--purple-text)",
+  "アサイン済み": "background:#2f7d4a;color:#fff",
+};
+const WEBTEST_STATUS_STYLE = {
+  "発行依頼中": "background:var(--orange);color:var(--orange-text)",
+  "実施中":     "background:var(--blue);color:var(--blue-text)",
+  "実施済み":   "background:var(--green);color:var(--green-text)",
+};
+
+function recruitStatusStyle(s) { return RECRUIT_STATUS_STYLE[s] || "background:#f0eee7;color:#6b6b6b"; }
+function recruitStatusTagHTML(s) {
+  return `<span class="tag" style="${recruitStatusStyle(s)}">${escapeHtml(s)}</span>`;
+}
+// Webテストは「PJ側から要望があった場合のみ」あり＋ステータスを出す
+function webTestTagsHTML(r) {
+  if (!r || !r.webTestRequested) {
+    return `<span class="tag" style="background:#f0eee7;color:#6b6b6b">Webテスト なし</span>`;
+  }
+  const st = r.webTestStatus;
+  const style = WEBTEST_STATUS_STYLE[st] || "background:#f0eee7;color:#6b6b6b";
+  return `<span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">Webテスト あり</span>`
+    + ` <span class="tag" style="${style}">${escapeHtml(st)}</span>`;
+}
+
+// シート側の表記ゆれ（全角英数・全角プラス・空白）を吸収してアプリのプロジェクト名と突き合わせる
+function normalizeProjectKey(name) {
+  return String(name || "")
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/＋/g, "+").replace(/－/g, "-").replace(/’/g, "'")
+    .replace(/[\s　]/g, "")
+    .toUpperCase();
+}
+
+// プロジェクト単位で1枚のカードにまとめる。
+// アプリ上のプロジェクト（＝枠情報）を基準に並べ、シートにしか無い事業名は後ろに続ける。
+// 同じ事業名でフォーム回答が複数ある場合はタイムスタンプが最新のものを採用する
+// （同期側で既に1件に絞られているが、古いデータが残っていても壊れないよう二重に判定する）。
+function buildRecruitEntries() {
+  const rows = (state.recruitment && state.recruitment.rows) || [];
+  const ts = r => {
+    const ms = Date.parse(r.timestamp || "");
+    return isFinite(ms) ? ms : null;
+  };
+  const latestByKey = new Map();
+  rows.forEach(r => {
+    const key = normalizeProjectKey(r.project);
+    const prev = latestByKey.get(key);
+    if (!prev) { latestByKey.set(key, r); return; }
+    const a = ts(prev), b = ts(r);
+    let newer;
+    if (a === null && b === null) newer = (r.rowNumber || 0) >= (prev.rowNumber || 0);
+    else if (a === null) newer = true;
+    else if (b === null) newer = false;
+    else newer = b > a;
+    if (newer) latestByKey.set(key, r);
+  });
+
+  // プロジェクト名で突き合わせるほか、recruitSourceKey（シート上の元の事業名）でも紐づける。
+  // アプリ側で短い名前に付け替えているPJでも、シートの募集状況を正しく拾えるようにするため。
+  const used = new Set();
+  const entries = state.projects.map(p => {
+    const nameKey = normalizeProjectKey(p.name);
+    const srcKey = p.recruitSourceKey || "";
+    used.add(nameKey);
+    if (srcKey) used.add(srcKey);
+    const row = latestByKey.get(nameKey) || (srcKey ? latestByKey.get(srcKey) : null);
+    return { name: p.name, project: p, row: row || null };
+  });
+  latestByKey.forEach((r, key) => {
+    if (!used.has(key)) entries.push({ name: r.project, project: null, row: r });
+  });
+
+  // 募集が動いているものを上位に。sort は安定なので、同ステータス内の並びは元のまま保たれる。
+  const rank = e => {
+    const i = RECRUIT_STATUS_ORDER.indexOf(e.row ? e.row.recruitStatus : "未募集");
+    return i < 0 ? RECRUIT_STATUS_ORDER.length : i;
+  };
+  return entries.sort((a, b) => rank(a) - rank(b));
+}
+
+function renderRecruit() {
+  const entries = buildRecruitEntries();
+  const synced = state.recruitment && state.recruitment.syncedAt;
+  const syncedLabel = synced
+    ? new Date(synced).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : "未取得";
+
+  return `
+    <div class="sync-note">募集フォームの回答シートと連携（5時間ごとに自動取得）・最終取得 ${escapeHtml(syncedLabel)}</div>
+    <div class="grid">${entries.map(renderRecruitCard).join("")}</div>
+  `;
+}
+
+function renderRecruitCard(e) {
+  const r = e.row;
+  const p = e.project;
+  const status = r ? r.recruitStatus : "未募集";
+
+  const cap = p ? (p.capacity || 2) : null;
+  const filled = p ? (p.students || []).length : 0;
+  const open = p ? Math.max(0, cap - filled) : null;
+  const slotsPill = p
+    ? `<span class="count-pill" ${open > 0 ? 'style="background:var(--orange);color:var(--orange-text)"' : ""}>${filled}/${cap}名${open > 0 ? `・空き${open}` : ""}</span>`
+    : `<span class="count-pill" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">アプリ未登録</span>`;
+
+  // メンターはシート優先。シートに回答が無いPJはアプリ側のメンターで補う。
+  const mentorText = (r && r.mentor)
+    || (p && (p.mentors || []).length ? p.mentors.map(m => m.name).join("、") : "");
+
+  return `
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">${escapeHtml(e.name)}</div>
+        <div style="flex:0 0 auto;white-space:nowrap;margin-left:8px">${slotsPill}</div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+        ${recruitStatusTagHTML(status)}${webTestTagsHTML(r)}
+      </div>
+      ${mentorText ? `<div class="info-row"><div class="k">メンター</div><div class="v">${escapeHtml(mentorText)}</div></div>` : ""}
+      ${r && !p ? `<div class="warn">アプリ上のプロジェクトと紐づいていません（枠情報なし）</div>` : ""}
+    </div>
+  `;
 }
 
 // ====== 長押しドラッグでの並び替え ======
@@ -2267,7 +2453,7 @@ const EDIT_FNS = [
   "addKpiDept","renameKpiDept","addKpiDeptLead","removeKpiDeptLead",
   "addKpiGroup","renameKpiGroupNode","deleteKpiGroupNode","addKpiGroupNodeMember","removeKpiGroupNodeMember","addKpiGroupNodeChild",
   "resetData",
-  "backupToSheets",
+  "backupToSheets","syncRecruitment",
 ];
 if (!isEditMode) {
   EDIT_FNS.forEach(fn => {
