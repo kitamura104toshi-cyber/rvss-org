@@ -316,6 +316,22 @@
 
   /* ===== プロジェクト募集状況 ===== */
   .sync-note { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+  .view-toggle { display: flex; gap: 8px; margin-bottom: 10px; }
+
+  /* 学生ビュー：入れる枠が何個あるかを最初に読ませる */
+  .open-count { display: flex; align-items: baseline; gap: 6px; margin-bottom: 8px; }
+  .open-count .num { font-size: 30px; font-weight: 700; line-height: 1; }
+  .open-count .unit { font-size: 12px; }
+
+  /* 進捗ビュー：募集〜アサインまでのどこにいるか */
+  .track { display: flex; align-items: flex-start; margin: 12px 0; }
+  .track .step { flex: 1; text-align: center; min-width: 0; }
+  .track .bar { height: 4px; border-radius: 2px; background: var(--border); }
+  .track .step + .step .bar { margin-left: 2px; }
+  .track .lbl { font-size: 10px; color: var(--muted); margin-top: 5px; }
+  .track .step.done .bar { background: var(--green-text); }
+  .track .step.done .lbl { color: var(--green-text); }
+  .track .step.current .lbl { font-size: 11px; font-weight: 700; margin-top: 4px; }
   .info-row { display: flex; gap: 8px; font-size: 13px; padding: 3px 0; }
   .info-row .k { flex: 0 0 76px; font-size: 12px; color: var(--muted); padding-top: 2px; }
   .info-row .v { flex: 1; min-width: 0; word-break: break-word; }
@@ -1150,17 +1166,6 @@ function recruitStatusStyle(s) { return RECRUIT_STATUS_STYLE[s] || "background:#
 function recruitStatusTagHTML(s) {
   return `<span class="tag" style="${recruitStatusStyle(s)}">${escapeHtml(s)}</span>`;
 }
-// Webテストは「PJ側から要望があった場合のみ」あり＋ステータスを出す
-function webTestTagsHTML(r) {
-  if (!r || !r.webTestRequested) {
-    return `<span class="tag" style="background:#f0eee7;color:#6b6b6b">Webテスト なし</span>`;
-  }
-  const st = r.webTestStatus;
-  const style = WEBTEST_STATUS_STYLE[st] || "background:#f0eee7;color:#6b6b6b";
-  return `<span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">Webテスト あり</span>`
-    + ` <span class="tag" style="${style}">${escapeHtml(st)}</span>`;
-}
-
 // シート側の表記ゆれ（全角英数・全角プラス・空白）を吸収してアプリのプロジェクト名と突き合わせる
 function normalizeProjectKey(name) {
   return String(name || "")
@@ -1217,6 +1222,18 @@ function buildRecruitEntries() {
   return entries.sort((a, b) => rank(a) - rank(b));
 }
 
+// 学生は「入れる枠があるか」、アサイン担当は「案件がどこまで進んだか」を見たいので、
+// 同じデータを2つのビューで切り替える。
+let recruitView = "student";
+function onRecruitViewChange(v) {
+  recruitView = v;
+  const el = document.getElementById("content");
+  if (el) el.innerHTML = renderRecruit();
+}
+
+// 実際に学生を探している状態（枠が空いていても未募集なら「募集中」とは出さない）
+const RECRUITING_STATUSES = ["募集中", "再募集中", "応募待ち"];
+
 function renderRecruit() {
   const entries = buildRecruitEntries();
   const synced = state.recruitment && state.recruitment.syncedAt;
@@ -1224,39 +1241,112 @@ function renderRecruit() {
     ? new Date(synced).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
     : "未取得";
 
+  const views = [
+    { id: "student",  label: "募集枠で見る" },
+    { id: "progress", label: "進捗で見る" },
+  ];
+  const toggle = views.map(v => {
+    const active = recruitView === v.id;
+    const style = `background:${active?'#2a2a2a':'#fff'};color:${active?'#fff':'#6b6b6b'};border:1px solid ${active?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${active?'font-weight:700':''}`;
+    return `<span class="tag" style="${style}" onclick="onRecruitViewChange('${v.id}')">${v.label}</span>`;
+  }).join("");
+
+  const card = recruitView === "progress" ? renderRecruitCardProgress : renderRecruitCardStudent;
   return `
+    <div class="view-toggle">${toggle}</div>
     <div class="sync-note">募集フォームの回答シートと連携（5時間ごとに自動取得）・最終取得 ${escapeHtml(syncedLabel)}</div>
-    <div class="grid">${entries.map(renderRecruitCard).join("")}</div>
+    <div class="grid">${entries.map(card).join("")}</div>
   `;
 }
 
-function renderRecruitCard(e) {
+// カード共通：アプリ上のプロジェクトから枠の情報を取り出す
+function recruitSlots(p) {
+  if (!p) return { cap: null, filled: 0, open: null };
+  const cap = p.capacity || 2;
+  const filled = (p.students || []).length;
+  return { cap, filled, open: Math.max(0, cap - filled) };
+}
+function recruitMentor(e) {
+  return (e.row && e.row.mentor)
+    || (e.project && (e.project.mentors || []).length ? e.project.mentors.map(m => m.name).join("、") : "");
+}
+
+// 案3：空き枠を主役にしたカード（学生向け）
+function renderRecruitCardStudent(e) {
   const r = e.row;
-  const p = e.project;
   const status = r ? r.recruitStatus : "未募集";
+  const { open } = recruitSlots(e.project);
+  const recruiting = open > 0 && RECRUITING_STATUSES.includes(status);
 
-  const cap = p ? (p.capacity || 2) : null;
-  const filled = p ? (p.students || []).length : 0;
-  const open = p ? Math.max(0, cap - filled) : null;
-  const slotsPill = p
-    ? `<span class="count-pill" ${open > 0 ? 'style="background:var(--orange);color:var(--orange-text)"' : ""}>${filled}/${cap}名${open > 0 ? `・空き${open}` : ""}</span>`
-    : `<span class="count-pill" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">アプリ未登録</span>`;
+  let num, unit, color;
+  if (open === null)      { num = "—"; unit = "アプリ未登録"; color = "var(--muted)"; }
+  else if (open > 0)      { num = open; unit = recruiting ? "枠 募集中" : "枠 空き"; color = "var(--orange-text)"; }
+  else                    { num = 0;    unit = "枠 満員";     color = "var(--muted)"; }
 
-  // メンターはシート優先。シートに回答が無いPJはアプリ側のメンターで補う。
-  const mentorText = (r && r.mentor)
-    || (p && (p.mentors || []).length ? p.mentors.map(m => m.name).join("、") : "");
+  const mentor = recruitMentor(e);
+  const webTest = r && r.webTestRequested
+    ? ` <span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">Webテスト必須・${escapeHtml(r.webTestStatus)}</span>`
+    : "";
+
+  return `
+    <div class="card" ${recruiting ? 'style="border-color:var(--orange-text)"' : ""}>
+      <div class="open-count">
+        <div class="num" style="color:${color}">${num}</div>
+        <div class="unit" style="color:${color}">${unit}</div>
+      </div>
+      <div class="card-title" style="font-size:14px;margin-bottom:2px">${escapeHtml(e.name)}</div>
+      ${mentor ? `<div class="mu" style="font-size:12px;color:var(--muted);margin-bottom:10px">メンター ${escapeHtml(mentor)}</div>` : `<div style="margin-bottom:10px"></div>`}
+      <div style="display:flex;flex-wrap:wrap;gap:4px">
+        ${recruitStatusTagHTML(status)}${webTest}
+      </div>
+    </div>
+  `;
+}
+
+// 案2：募集からアサインまでの進捗トラック付きカード（アサイン担当向け）
+const RECRUIT_STEPS = ["募集中", "応募あり", "連携中", "確定", "アサイン済"];
+// 未募集・辞退はトラック上の位置を持たないため -1 を返し、代わりにステータスを1行で出す
+function recruitStepIndex(status) {
+  if (RECRUITING_STATUSES.includes(status)) return 0;
+  if (status === "応募あり") return 1;
+  if (status === "PJ連携中") return 2;
+  if (status === "アサイン確定") return 3;
+  if (status === "アサイン済み") return 4;
+  return -1;
+}
+
+function renderRecruitCardProgress(e) {
+  const r = e.row;
+  const status = r ? r.recruitStatus : "未募集";
+  const { cap, filled, open } = recruitSlots(e.project);
+  const slotsPill = cap === null
+    ? `<span class="count-pill" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">アプリ未登録</span>`
+    : `<span class="count-pill" ${open > 0 ? 'style="background:var(--orange);color:var(--orange-text)"' : ""}>${filled}/${cap}名${open > 0 ? `・空き${open}` : ""}</span>`;
+
+  const idx = recruitStepIndex(status);
+  const body = idx < 0
+    ? `<div style="margin:12px 0">${recruitStatusTagHTML(status)}</div>`
+    : `<div class="track">${RECRUIT_STEPS.map((s, i) => `
+        <div class="step ${i <= idx ? "done" : ""} ${i === idx ? "current" : ""}">
+          <div class="bar"></div><div class="lbl">${s}</div>
+        </div>`).join("")}</div>`;
+
+  const mentor = recruitMentor(e);
+  const infoRow = (k, v) => v ? `<div class="info-row"><div class="k">${k}</div><div class="v">${v}</div></div>` : "";
 
   return `
     <div class="card">
-      <div class="card-head">
+      <div class="card-head" style="margin-bottom:0">
         <div class="card-title">${escapeHtml(e.name)}</div>
         <div style="flex:0 0 auto;white-space:nowrap;margin-left:8px">${slotsPill}</div>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
-        ${recruitStatusTagHTML(status)}${webTestTagsHTML(r)}
+      ${body}
+      <div style="padding-top:8px;border-top:1px dashed var(--border)">
+        ${infoRow("メンター", escapeHtml(mentor))}
+        ${infoRow("Webテスト", r && r.webTestRequested
+          ? `<span class="tag" style="${WEBTEST_STATUS_STYLE[r.webTestStatus] || "background:#f0eee7;color:#6b6b6b"}">${escapeHtml(r.webTestStatus)}</span>`
+          : `<span class="tag" style="background:#f0eee7;color:#6b6b6b">なし</span>`)}
       </div>
-      ${mentorText ? `<div class="info-row"><div class="k">メンター</div><div class="v">${escapeHtml(mentorText)}</div></div>` : ""}
-      ${r && !p ? `<div class="warn">アプリ上のプロジェクトと紐づいていません（枠情報なし）</div>` : ""}
     </div>
   `;
 }
