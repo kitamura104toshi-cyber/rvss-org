@@ -945,6 +945,22 @@ function allAssignedNames() {
 function isBSMember(n) {
   return !!(memberInfo(n) || {}).isBS;
 }
+
+// プロジェクトに参加している学生名（重複なし）。
+// 学生欄に載っていなくてもグループ内のメンバーは実際の参加者なので、枠のカウントに含める。
+// 同じ人が複数グループに入っていても1名として数え、異体字（﨑/崎）のゆれも吸収する。
+function projectStudentNames(p) {
+  const byKey = new Map();
+  const add = m => {
+    const n = m && m.name;
+    if (!n || isBSMember(n)) return;
+    const key = n.replace(/﨑/g, "崎");
+    if (!byKey.has(key)) byKey.set(key, n);
+  };
+  (p.students || []).forEach(add);
+  (p.groups || []).forEach(g => (g.members || []).forEach(add));
+  return Array.from(byKey.values());
+}
 function getStats() {
   const pjAssigned = new Set();
   state.projects.forEach(p => {
@@ -1075,8 +1091,9 @@ function renderContent() {
 }
 
 function renderProject(p, i) {
-  const filled = (p.mentors?.length||0) + (p.students?.length||0);
   const cap = p.capacity || 2;
+  // 学生欄とグループ内メンバーを合わせた実参加人数で枠を数える
+  const filled = projectStudentNames(p).length;
   const groupBlocks = (p.groups||[]).map((g, gi) => `
     <div class="group-box">
       <div class="group-head">
@@ -1103,7 +1120,7 @@ function renderProject(p, i) {
       <div class="card-head">
         <div class="card-title">${escapeHtml(p.name)}</div>
         <div>
-          <span class="count-pill">${p.students.length}/${cap}名</span>
+          <span class="count-pill">${filled}/${cap}名</span>
           <button class="btn editor-only" onclick="editProject(${i})">編集</button>
         </div>
       </div>
@@ -1112,7 +1129,7 @@ function renderProject(p, i) {
         `<div class="slot empty editor-only" onclick="addToProject(${i},'mentors')">+ メンターを設定</div>`}
       <div class="section-label">学生（原則${cap}名）</div>
       ${(p.students||[]).map((m,mi) => slot(m.name, m.role, () => `removeFromProject(${i},'students','${m.name}')`, {type:"projectStudents", pi:i}, mi)).join("")}
-      ${p.students.length < cap ? `<div class="slot empty editor-only" onclick="addToProject(${i},'students')">+ 学生を追加</div>` : ""}
+      ${filled < cap ? `<div class="slot empty editor-only" onclick="addToProject(${i},'students')">+ 学生を追加</div>` : ""}
       <button class="btn-add editor-only" onclick="addToProject(${i},'students',true)">+ 追加枠</button>
       ${groupBlocks}
       <button class="btn-add editor-only" onclick="addProjectGroup(${i})" style="margin-top:12px;border-style:solid;background:var(--accent-soft);color:var(--accent)">+ グループを追加</button>
@@ -1263,7 +1280,7 @@ function renderRecruit() {
 function recruitSlots(p) {
   if (!p) return { cap: null, filled: 0, open: null };
   const cap = p.capacity || 2;
-  const filled = (p.students || []).length;
+  const filled = projectStudentNames(p).length;
   return { cap, filled, open: Math.max(0, cap - filled) };
 }
 function recruitMentor(e) {
