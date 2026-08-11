@@ -1932,6 +1932,7 @@ function renderAll() {
   }).join(" ");
 
   // 契約状況フィルター（NDA・業務委託契約は独立管理なので、それぞれ未締結/締結済みを独立したチップにする）
+  // BSメンバーはそもそも契約の対象外なので、件数にも絞り込み結果にも含めない
   const CONTRACT_FILTERS = [
     { id: "ndaNone",        label: "NDA未締結",         test: mi => !mi.ndaSigned },
     { id: "ndaDone",        label: "NDA締結済み",       test: mi => !!mi.ndaSigned },
@@ -1940,7 +1941,7 @@ function renderAll() {
   ];
   const contractSummary = CONTRACT_FILTERS.map(f => {
     const active = allFilterContract === f.id;
-    const count = Object.keys(map).filter(n => f.test(memberInfo(n) || {})).length;
+    const count = Object.keys(map).filter(n => !isBSMember(n) && f.test(memberInfo(n) || {})).length;
     const style = `background:${active?'#2a2a2a':'#fff'};color:${active?'#fff':'#6b6b6b'};border:1px solid ${active?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${active?'font-weight:700':''}`;
     return `<span class="tag" style="${style}" onclick="onAllContractChange('${f.id}')">${f.label} ${count}</span>`;
   }).join(" ");
@@ -1961,6 +1962,7 @@ function renderAll() {
     .filter(([n]) => !allFilterSkill || hasSkillCategory(n, allFilterSkill))
     .filter(([n]) => {
       if (!allFilterContract) return true;
+      if (isBSMember(n)) return false;
       const f = CONTRACT_FILTERS.find(f => f.id === allFilterContract);
       return !f || f.test(memberInfo(n) || {});
     })
@@ -2036,10 +2038,10 @@ function renderMemberCard(n, info) {
           <button class="btn editor-only" onclick="deleteMember('${n}')" title="退会扱いにする（全アサインから除外）" style="font-size:11px;padding:4px 10px;color:var(--pink-text)">退会</button>
         </div>
       </div>
-      <div style="margin-bottom:10px">
+      ${mi.isBS ? "" : `<div style="margin-bottom:10px">
         ${ndaStatusTagHTML(n, mi.ndaSigned)}
         ${outsourcingStatusTagHTML(n, mi.outsourcingSigned)}
-      </div>
+      </div>`}
       <div style="line-height:1.8;margin-bottom:12px">
         ${mi.university ? univTagHTML(mi.university) : ""}
         ${mi.area ? areaTagHTML(mi.area) : ""}
