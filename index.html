@@ -2052,7 +2052,7 @@ function renderMemberCard(n, info) {
   return `
     <div class="card">
       <div class="card-head">
-        <div class="card-title">${escapeHtml(n)}${mi.isBS ? ` <span class="tag" style="background:#2a2a2a;color:#fff;font-size:11px;vertical-align:middle">BS</span>` : ""}</div>
+        <div class="card-title">${escapeHtml(n)}${mi.isBS ? ` <span class="tag" style="background:#2a2a2a;color:#fff;font-size:11px;vertical-align:middle">BS</span>` : ""}${mi.status ? ` <span class="tag" style="background:var(--pink);color:var(--pink-text);font-size:11px;vertical-align:middle">${escapeHtml(mi.status)}</span>` : ""}</div>
         <div style="display:flex;gap:4px;align-items:center">
           <button class="btn editor-only" onclick="editMember('${n}')" style="font-size:11px;padding:4px 10px">編集</button>
           <button class="btn editor-only" onclick="deleteMember('${n}')" title="退会扱いにする（全アサインから除外）" style="font-size:11px;padding:4px 10px;color:var(--pink-text)">退会</button>
@@ -2488,6 +2488,12 @@ function editMember(name) {
     </select>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">名前</label>
     <input id="em-name" value="${escapeHtml(name)}" placeholder="名前を変更する場合のみ書き換え"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">状態（休会中・退会準備中など。通常は空欄）</label>
+    <input id="em-status" value="${escapeHtml(current.status||"")}" placeholder="例：退会準備中" list="em-status-options"/>
+    <datalist id="em-status-options">
+      <option value="休会中"></option>
+      <option value="退会準備中"></option>
+    </datalist>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">契約開始日（1年ごとに自動更新）</label>
     <input id="em-contract-start" type="date" value="${escapeHtml(current.contractStartDate||"")}"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">前月稼働時間（h）｜通常はNotionと連携して自動更新</label>
@@ -2510,6 +2516,7 @@ function saveMemberEdit(oldName) {
   const univ = (document.getElementById("em-univ").value||"").trim();
   const area = document.getElementById("em-area").value;
   const newName = (document.getElementById("em-name").value||"").trim() || oldName;
+  const status = (document.getElementById("em-status").value||"").trim();
   const contractStartDate = document.getElementById("em-contract-start").value || "";
   const workloadRaw = document.getElementById("em-workload").value;
   const lastMonthHours = workloadRaw === "" ? null : Number(workloadRaw);
@@ -2552,10 +2559,10 @@ function saveMemberEdit(oldName) {
   const outsourcingSigned = (state.memberOverrides[newName] || {}).outsourcingSigned;
   const isBS = (state.memberOverrides[newName] || {}).isBS;
   const skillCategories = (state.memberOverrides[newName] || {}).skillCategories;
-  if (!univ && !area && !contractStartDate && lastMonthHours == null && !experience && !skills && !canDo && !wantToDo && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories) {
+  if (!univ && !area && !status && !contractStartDate && lastMonthHours == null && !experience && !skills && !canDo && !wantToDo && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories) {
     delete state.memberOverrides[newName];
   } else {
-    state.memberOverrides[newName] = { university: univ, area: area, contractStartDate, lastMonthHours, experience, skills, canDo, wantToDo, ndaSigned, outsourcingSigned, isBS, skillCategories };
+    state.memberOverrides[newName] = { university: univ, area: area, status, contractStartDate, lastMonthHours, experience, skills, canDo, wantToDo, ndaSigned, outsourcingSigned, isBS, skillCategories };
   }
   save(); closeModal(); render();
 }
