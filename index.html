@@ -1846,7 +1846,7 @@ function addKpiGroupNodeChild(deptIdx, path) {
 // 全メンバーごとに「プロジェクト/コミュニティ運営/スクール/オンボ/未アサイン」を集計したマップを返す
 function buildMemberMap() {
   const map = {};
-  const ensure = (n) => { if(!map[n]) map[n]={pjs:[],depts:[],onbo:false,schools:[]}; if(!map[n].schools) map[n].schools=[]; return map[n]; };
+  const ensure = (n) => { if(!map[n]) map[n]={pjs:[],depts:[],onbo:false,schools:[],kpis:[]}; if(!map[n].schools) map[n].schools=[]; if(!map[n].kpis) map[n].kpis=[]; return map[n]; };
   state.members.forEach(n => { if (!isDeleted(n)) ensure(n); });
   // Google Sheets由来のメンバーも追加（未登録分・未削除分）
   Object.keys(MEMBER_INFO).forEach(n => {
@@ -1873,6 +1873,25 @@ function buildMemberMap() {
     s.students.forEach(n => add(n, "受講"));
   });
   state.onboarding.forEach(n => { ensure(n).onbo=true; });
+
+  // 新体制（KPIツリー）のアサイン。
+  // ツリーには「NoBorder」「各部署PM」のように人物ではない項目も入っているため、
+  // ここまでで実在が確認できているメンバーにだけ付ける（ensureで新規作成はしない）。
+  const attachKpi = (name, label) => {
+    if (!name) return;
+    const key = [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")].find(k => map[k]);
+    if (!key) return;
+    if (!map[key].kpis.includes(label)) map[key].kpis.push(label);
+  };
+  (state.kpiDepts || []).forEach(d => {
+    (d.lead || []).forEach(m => attachKpi(m.name, d.name + (m.role ? "(" + m.role + ")" : "")));
+    // 階層が深いので「最上位/末端(役職)」に畳んで1つのバッジにする
+    const walk = (node) => {
+      (node.members || []).forEach(m => attachKpi(m.name, d.name + "/" + node.name + (m.role ? "(" + m.role + ")" : "")));
+      (node.children || []).forEach(walk);
+    };
+    (d.groups || []).forEach(walk);
+  });
   return map;
 }
 
@@ -1900,6 +1919,7 @@ function renderAll() {
   const assignDefs = [
     { id: "hasPj",        label: "プロジェクト所属", test: (i, n) => i.pjs.length > 0 },
     { id: "hasCommunity", label: "コミュニティ運営", test: (i, n) => i.depts.length > 0 },
+    { id: "hasKpi",       label: "新体制アサイン",   test: (i, n) => (i.kpis || []).length > 0 },
   ];
   const assignDef = assignDefs.find(d => d.id === allFilterAssign);
   const assignSummary = assignDefs.map(d => {
@@ -2048,6 +2068,7 @@ function renderMemberCard(n, info) {
         ${info.pjs.map(p=>`<span class="tag pj">${escapeHtml(p)}</span>`).join(" ")}
         ${info.depts.map(d=>`<span class="tag">${escapeHtml(d)}</span>`).join(" ")}
         ${(info.schools||[]).map(s=>`<span class="tag" style="background:var(--purple);color:var(--purple-text)">スクール:${escapeHtml(s)}</span>`).join(" ")}
+        ${(info.kpis||[]).map(k=>`<span class="tag" style="background:var(--pink);color:var(--pink-text)">新体制:${escapeHtml(k)}</span>`).join(" ")}
         ${info.onbo?'<span class="tag" style="background:var(--orange);color:var(--orange-text)">オンボ</span>':''}
         ${(typeof mi.lastMonthHours === "number" && mi.lastMonthHours < LOW_WORKLOAD_THRESHOLD_HOURS) ? '<span class="tag" style="background:var(--green,#e6f4ea);color:var(--green-text,#2f7d4a)">稼働余裕あり</span>' : ''}
       </div>
