@@ -1954,9 +1954,8 @@ function renderAll() {
   // 契約状況フィルター（NDA・業務委託契約は独立管理なので、それぞれ未締結/締結済みを独立したチップにする）
   // BSメンバーはそもそも契約の対象外なので、件数にも絞り込み結果にも含めない
   const CONTRACT_FILTERS = [
-    { id: "ndaNone",        label: "NDA未締結",         test: mi => ndaStage(mi) === "none" },
-    { id: "ndaPending",     label: "NDA確認中",         test: mi => ndaStage(mi) === "pending" },
-    { id: "ndaDone",        label: "NDA締結完了",       test: mi => ndaStage(mi) === "done" },
+    { id: "ndaNone",        label: "NDA未締結",         test: mi => !mi.ndaSigned },
+    { id: "ndaDone",        label: "NDA締結完了",       test: mi => !!mi.ndaSigned },
     { id: "contractNone",   label: "業務委託契約未締結", test: mi => !mi.outsourcingSigned },
     { id: "contractDone",   label: "業務委託契約締結済み", test: mi => !!mi.outsourcingSigned },
   ];
@@ -2415,39 +2414,22 @@ function restoreMember(name) {
 const CONTRACT_TAG_STYLE_OFF = "background:#fff;color:#6b6b6b;border:1px solid #e5e3dc";
 const CONTRACT_TAG_STYLE_NDA_ON = "background:var(--green,#e6f4ea);color:var(--green-text,#2f7d4a)";
 const CONTRACT_TAG_STYLE_OUTSOURCING_ON = "background:var(--blue,#e8f0fe);color:var(--blue-text,#1a56c4)";
-// NDAは契約シートの2列（NDA締結（確認中）→ 締結完了）に対応する3段階。
-// 確認中どまりで止まっている人を見落とさないよう、締結完了とは別の色で出す。
-const CONTRACT_TAG_STYLE_NDA_PENDING = "background:var(--orange,#fff1de);color:var(--orange-text,#a8631b)";
-function ndaStage(mi) {
-  if (mi && mi.ndaCompleted) return "done";
-  if (mi && mi.ndaSigned) return "pending";
-  return "none";
-}
+// NDAは契約シートのF列「NDA締結（確認中）」だけを見る。チェックが付いていれば締結完了。
 function ndaStatusTagHTML(name, mi) {
-  const stage = ndaStage(mi);
-  const style = stage === "done" ? CONTRACT_TAG_STYLE_NDA_ON
-    : stage === "pending" ? CONTRACT_TAG_STYLE_NDA_PENDING
-    : CONTRACT_TAG_STYLE_OFF;
-  const label = stage === "done" ? "✅ NDA締結完了"
-    : stage === "pending" ? "NDA確認中"
-    : "NDA未締結";
-  return `<span class="tag editable" style="${style}" onclick="cycleNdaStatus('${name}')" title="クリックで 未締結→確認中→締結完了 を切り替え">${label}</span>`;
+  const s = !!(mi && mi.ndaSigned);
+  return `<span class="tag editable" style="${s ? CONTRACT_TAG_STYLE_NDA_ON : CONTRACT_TAG_STYLE_OFF}" onclick="toggleNdaSigned('${name}')" title="クリックで切り替え">${s ? "✅ NDA締結完了" : "NDA未締結"}</span>`;
 }
 function outsourcingStatusTagHTML(name, signed) {
   const s = !!signed;
   return `<span class="tag editable" style="${s ? CONTRACT_TAG_STYLE_OUTSOURCING_ON : CONTRACT_TAG_STYLE_OFF}" onclick="toggleOutsourcingSigned('${name}')" title="クリックで切り替え">${s ? "✅ 業務委託契約締結済み" : "業務委託契約未締結"}</span>`;
 }
-function cycleNdaStatus(name) {
+function toggleNdaSigned(name) {
   const current = memberInfo(name) || {};
-  const stage = ndaStage(current);
-  const next = stage === "none" ? { ndaSigned: true, ndaCompleted: false }
-    : stage === "pending" ? { ndaSigned: true, ndaCompleted: true }
-    : { ndaSigned: false, ndaCompleted: false };
   if (!state.memberOverrides) state.memberOverrides = {};
   state.memberOverrides[name] = Object.assign(
     { university: "", area: "", experience: "", skills: "", canDo: "", wantToDo: "" },
     current,
-    next
+    { ndaSigned: !current.ndaSigned }
   );
   save(); render();
 }
@@ -2604,7 +2586,7 @@ const EDIT_FNS = [
   "addToList","removeFromList",
   "addMember","editMember","saveMemberEdit","deleteMember","restoreMember",
   "editSlotMember","saveSlotMember","reorderItem",
-  "cycleNdaStatus","toggleOutsourcingSigned",
+  "toggleNdaSigned","toggleOutsourcingSigned",
   "addCustomTab","deleteCustomTab",
   "addKpiDept","renameKpiDept","addKpiDeptLead","removeKpiDeptLead",
   "addKpiGroup","renameKpiGroupNode","deleteKpiGroupNode","addKpiGroupNodeMember","removeKpiGroupNodeMember","addKpiGroupNodeChild",
