@@ -226,18 +226,6 @@
   }
   .btn-add:hover { background: #f0eee7; }
 
-  .kpi-depts { display: flex; flex-direction: column; gap: 16px; }
-  .kpi-groups-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
-    align-items: start;
-  }
-  .kpi-groups-grid > .group-box,
-  .kpi-groups-grid > .subgroup-box { margin-top: 0; }
-  @media (max-width: 720px) {
-    .kpi-groups-grid { grid-template-columns: 1fr; }
-  }
 
   .group-box {
     border: 1px solid var(--border);
@@ -300,7 +288,6 @@
     padding: 6px 12px; border-radius: 999px; font-size: 13px;
     display: inline-flex; align-items: center; gap: 6px;
   }
-  .chip.onbo { background: var(--orange); color: var(--orange-text); }
   .warn {
     font-size: 12px; color: var(--pink-text); margin-top: 8px;
   }
@@ -506,68 +493,11 @@ const INITIAL = {
       students: ["田端心温","石毛琳太郎","北村俊輝","鈴木琢仁"] },
   ],
   // Excelに記載なし。画面で追加・編集可能
-  onboarding: [],
   unassigned: [],
 };
 
-// ====== KPI責任範囲・担当者マップの初期データ ======
 // 部署（department）の下は「グループ」を無制限に入れ子にできる再帰構造。
 // 各グループノード = { name, members:[{name,role}], children:[グループノード...] }
-const KPI_DEPTS_SEED = [
-  { name: "組織の人数", lead: [{ name: "佐々木", role: "統括" }, { name: "本田", role: "補佐" }], groups: [
-    { name: "採用人数", members: [{ name: "佐々木", role: "統括" }], children: [
-      { name: "広報", members: [{ name: "久次米", role: "" }], children: [] },
-      { name: "企画", members: [{ name: "くずお", role: "" }], children: [] },
-      { name: "採用", members: [{ name: "芹澤", role: "" }], children: [] },
-    ]},
-    { name: "継続率", members: [{ name: "小笹", role: "" }], children: [] },
-  ]},
-  { name: "メンバー平均レベル", lead: [{ name: "太田", role: "" }, { name: "杉本", role: "" }], groups: [
-    { name: "マインドセット", members: [{ name: "山口", role: "360度評価の平均スコア（マインド/ビジネス基礎スキル）" }], children: [] },
-    { name: "AI+ / CREATOR'ZZ", members: [], children: [] },
-    { name: "環境", members: [{ name: "エブラヒミ", role: "統括" }], children: [
-      { name: "アサイン", members: [{ name: "北村", role: "" }], children: [] },
-      { name: "インプット", members: [{ name: "平山", role: "" }], children: [
-        { name: "基礎カリキュラム", members: [{ name: "エブラヒミ", role: "育成" }], children: [] },
-        { name: "オフライン勉強会", members: [{ name: "西原", role: "支部" }], children: [] },
-      ]},
-      { name: "アウトプット", members: [{ name: "藤原", role: "" }], children: [
-        { name: "プロジェクト", members: [
-          { name: "藤原", role: "統括" },
-          { name: "NoBorder", role: "" },
-          { name: "RVC", role: "" },
-          { name: "AIスクール", role: "" },
-          { name: "かにを", role: "" },
-          { name: "高校", role: "" },
-          { name: "カンファレンス", role: "" },
-          { name: "農業", role: "" },
-          { name: "CFO室", role: "" },
-        ], children: [] },
-        { name: "組織運営", members: [
-          { name: "平良", role: "情シス" },
-          { name: "尾関", role: "スクール" },
-        ], children: [] },
-      ]},
-      { name: "支部（オフライン）", members: [
-        { name: "松本", role: "関東" },
-        { name: "平井", role: "関西" },
-        { name: "平山", role: "東北" },
-        { name: "井上", role: "中部" },
-      ], children: [] },
-      { name: "土曜定例クオリティ", members: [
-        { name: "オコエさん", role: "ゲスト招待" },
-        { name: "山口", role: "ゲスト招待" },
-        { name: "山口", role: "発表クオリティ" },
-      ], children: [] },
-    ]},
-    { name: "コミットメント", members: [{ name: "小笹", role: "統括" }], children: [
-      { name: "土曜定例出席率", members: [{ name: "小笹", role: "人事" }], children: [] },
-      { name: "月稼働時間", members: [{ name: "小笹", role: "人事" }], children: [
-        { name: "計測", members: [{ name: "各部署PM", role: "" }], children: [] },
-      ]},
-    ]},
-  ]},
-];
 
 // ====== メンバーの大学・エリア情報（Google Sheetsより） ======
 const MEMBER_INFO = {
@@ -790,7 +720,6 @@ function ensureFields(s) {
   if (!s.deletedMembers) s.deletedMembers = [];
   if (!s.memberOverrides) s.memberOverrides = {};
   if (!s.customTabs) s.customTabs = [];
-  if (!s.kpiDepts) s.kpiDepts = JSON.parse(JSON.stringify(KPI_DEPTS_SEED));
   // 募集状況は sheets-recruitment-sync（Edge Function）が書き込む読み取り専用データ。
   // アプリ側からは編集しないため、未同期でも落ちないよう空で初期化しておく。
   if (!s.recruitment) s.recruitment = { syncedAt: "", rows: [] };
@@ -923,10 +852,7 @@ const BASE_TABS = [
   { id: "recruit", label: "プロジェクト募集状況" },
   { id: "community", label: "コミュニティ運営" },
   { id: "schools", label: "スクール受講者" },
-  { id: "onbo", label: "オンボーディング" },
-  { id: "lowWorkload", label: "稼働余裕あり" },
   { id: "all", label: "全メンバー" },
-  { id: "kpi", label: "新体制" },
 ];
 function getTabs() {
   return BASE_TABS.concat(state.customTabs.map(t => ({ id: t.id, label: t.label, custom: true })));
@@ -961,6 +887,9 @@ function projectStudentNames(p) {
   (p.groups || []).forEach(g => (g.members || []).forEach(add));
   return Array.from(byKey.values());
 }
+// 前月稼働時間がこの時間未満のメンバーを「稼働余裕あり」として各カードに表示する
+const LOW_WORKLOAD_THRESHOLD_HOURS = 60;
+
 function getStats() {
   const pjAssigned = new Set();
   state.projects.forEach(p => {
@@ -993,7 +922,6 @@ function getStats() {
     projects: state.projects.length,
     pjAssign: pjAssigned.size,
     community: communityNames.size,
-    onbo: state.onboarding.length,
     lowWorkload: lowWorkloadCount,
     total: totalCount,
   };
@@ -1013,7 +941,6 @@ function renderStats() {
     { num: s.total,      lbl: "総メンバー数" },
     { num: s.pjAssign,   lbl: "プロジェクト" },
     { num: s.community,  lbl: "組織運営" },
-    { num: s.onbo,       lbl: "オンボ中" },
     { num: s.lowWorkload, lbl: "稼働余裕あり" },
   ];
   document.getElementById("stats").innerHTML = items.map(i =>
@@ -1069,19 +996,12 @@ function renderContent() {
   } else if (currentTab === "schools") {
     tb.innerHTML = `<button class="btn primary editor-only" onclick="addSchool()">+ スクールを追加</button>`;
     el.innerHTML = `<div class="grid">${state.schools.map(renderSchool).join("")}</div>`;
-  } else if (currentTab === "onbo") {
-    el.innerHTML = renderOnboCard();
-  } else if (currentTab === "lowWorkload") {
-    el.innerHTML = renderLowWorkloadCard();
-  } else if (currentTab === "all") {
+    } else if (currentTab === "all") {
     tb.innerHTML = `
       <input class="search" id="search" placeholder="メンバー検索（名前・経験・スキル・できること・やりたいこと）…" value="${escapeHtml(allFilterSearch)}" oninput="onAllSearchInput(this.value)" style="min-width:260px"/>
       <button class="btn primary editor-only" onclick="addMember()" style="margin-left:6px">+ メンバーを追加</button>
     `;
     el.innerHTML = renderAll();
-  } else if (currentTab === "kpi") {
-    tb.innerHTML = `<button class="btn primary editor-only" onclick="addKpiDept()">+ 部署を追加</button>`;
-    el.innerHTML = `<div class="kpi-depts">${state.kpiDepts.map(renderKpiDept).join("")}</div>`;
   } else {
     const customTab = state.customTabs.find(t => t.id === currentTab);
     el.innerHTML = customTab
@@ -1382,8 +1302,6 @@ function getReorderableArray(ref) {
     case "deptLead": return state.departments[ref.di].lead;
     case "deptGroupMembers": return state.departments[ref.di].groups[ref.gi].members;
     case "deptSubGroupMembers": return state.departments[ref.di].groups[ref.gi].subGroups[ref.sgi].members;
-    case "kpiDeptLead": return state.kpiDepts[ref.di].lead;
-    case "kpiGroupMembers": return getKpiGroupNode(state.kpiDepts[ref.di], ref.path).members;
     default: return null;
   }
 }
@@ -1395,7 +1313,7 @@ function reorderItem(ref, fromIndex, toIndex) {
   save(); render();
 }
 // 名前クリックで「全メンバー」タブの本人カードへ遷移する（プロジェクト/コミュニティ運営/スクール受講者/
-// オンボーディング/未アサイン/KPI管理者のどこからでも共通で使う。閲覧モードでも動作する）
+// どのタブからでも共通で使う。閲覧モードでも動作する）
 function goToMemberCard(name) {
   currentTab = "all";
   allFilterSearch = "";
@@ -1415,7 +1333,7 @@ function goToMemberCard(name) {
     }
   }, 30);
 }
-// 名前クリックで「名前＋タグ」を一括編集するモーダル（部署/KPI/プロジェクトの担当者すべて共通）
+// 名前クリックで「名前＋タグ」を一括編集するモーダル（部署/プロジェクトの担当者すべて共通）
 function editSlotMember(ref, idx) {
   const arr = getReorderableArray(ref);
   if (!arr) return;
@@ -1656,197 +1574,11 @@ function removeSchoolStudent(i, name) {
   save(); render();
 }
 
-function renderOnboCard() {
-  return `
-    <div class="card">
-      <div class="card-head"><div class="card-title">オンボーディング中</div>
-        <button class="btn editor-only" onclick="addToList('onboarding')">+ 追加</button></div>
-      <div class="unassigned-list">
-        ${state.onboarding.map((n,i)=>`<span class="chip onbo"><span class="name-link" onclick='goToMemberCard("${n}")' title="クリックでメンバーカードへ">${escapeHtml(n)}</span> <button class="icon-btn editor-only" onclick="removeFromList('onboarding',${i})">×</button></span>`).join("")}
-      </div>
-      <div class="warn">オンボ期間：1ヶ月。終了後にプロジェクト or コミュニティ運営へ移行。</div>
-    </div>
-  `;
-}
-// 前月稼働時間が閾値未満のメンバーを自動抽出して表示する（手動での追加/削除はしない派生ビュー）
-const LOW_WORKLOAD_THRESHOLD_HOURS = 60;
-function renderLowWorkloadCard() {
-  const map = buildMemberMap();
-  const rows = Object.keys(map)
-    .filter(n => !isDeleted(n))
-    .map(n => ({ n, hours: (memberInfo(n) || {}).lastMonthHours }))
-    .filter(r => typeof r.hours === "number" && r.hours < LOW_WORKLOAD_THRESHOLD_HOURS)
-    .sort((a, b) => a.hours - b.hours);
-  const items = rows.map(r => `
-    <span class="chip">
-      <span class="name-link" onclick='goToMemberCard("${r.n}")' title="クリックでメンバーカードへ">${escapeHtml(r.n)}</span>
-      <span style="color:var(--muted);margin-left:4px">${r.hours}h</span>
-    </span>
-  `).join("");
-  return `
-    <div class="card">
-      <div class="card-head"><div class="card-title">稼働余裕あり（前月稼働${LOW_WORKLOAD_THRESHOLD_HOURS}時間未満・${rows.length}名）</div></div>
-      <div class="unassigned-list">
-        ${items || '<span style="font-size:13px;color:var(--muted)">該当メンバーはいません</span>'}
-      </div>
-      <div class="warn">前月稼働時間はNotionの稼働管理表と連携して自動反映されます（各メンバーカードにも表示されます）。</div>
-    </div>
-  `;
-}
 
-// ====== KPI責任範囲・担当者マップ ======
-// 部署カードの見た目は「コミュニティ運営」タブと同じ group-box/subgroup-box を流用しつつ、
-// グループは無制限に入れ子にできる再帰構造にしている（環境>インプット>基礎カリキュラム のようにいくらでも深くできる）。
-// 担当者はプロジェクトの担当者追加と同様、既存メンバーからの選択式（pickMember）にしている。
-// pathはKPI部署 d.groups をルートとした子インデックスの配列（例：[2,1,0]）
-function getKpiGroupNode(dept, path) {
-  let node = { children: dept.groups };
-  for (const i of path) node = node.children[i];
-  return node;
-}
-function getKpiGroupParentArray(dept, path) {
-  let arr = dept.groups;
-  for (let i = 0; i < path.length - 1; i++) arr = arr[path[i]].children;
-  return arr;
-}
-function kpiDeptTotal(d) {
-  const lead = (d.lead||[]).length;
-  const countNode = (n) => (n.members||[]).length + (n.children||[]).reduce((s,c)=>s+countNode(c),0);
-  return lead + (d.groups||[]).reduce((s,g)=>s+countNode(g), 0);
-}
-function renderKpiDept(d, i) {
-  const leadRows = (d.lead||[]).map((m, li) => `
-    <div class="slot" ${reorderData({type:"kpiDeptLead", di:i}, li)}>
-      <div><div class="name name-link" onclick='goToMemberCard("${m.name}")' title="クリックでメンバーカードへ">${escapeHtml(m.name)}</div></div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <span class="tag editable" onclick='editSlotMember({type:"kpiDeptLead",di:${i}},${li})' title="クリックで編集">${escapeHtml(m.role)}</span>
-        <button class="icon-btn editor-only" onclick="removeKpiDeptLead(${i},${li})">×</button>
-      </div>
-    </div>
-  `).join("");
-
-  const groupBlocks = (d.groups||[]).map((g, gi) => renderKpiGroupNode(g, i, [gi], 0)).join("");
-
-  return `
-    <div class="card dept-card">
-      <div class="card-head">
-        <div class="card-title" onclick="renameKpiDept(${i})" title="クリックで部署名変更" style="cursor:pointer">${escapeHtml(d.name)}</div>
-        <span class="count-pill">${kpiDeptTotal(d)}名</span>
-      </div>
-      ${leadRows}
-      <button class="btn-add editor-only" onclick="addKpiDeptLead(${i})">+ 統括などを追加</button>
-      <div class="kpi-groups-grid" style="margin-top:12px">${groupBlocks}</div>
-      <button class="btn-add editor-only" onclick="addKpiGroup(${i})" style="margin-top:12px;border-style:solid;background:var(--accent-soft);color:var(--accent)">+ グループを追加</button>
-    </div>
-  `;
-}
-function renderKpiGroupNode(node, deptIdx, path, depth) {
-  const pathStr = JSON.stringify(path);
-  const boxClass = depth === 0 ? "group-box" : "subgroup-box";
-  const titleClass = depth === 0 ? "group-title" : "subgroup-title";
-  const memberRows = (node.members||[]).map((m, mi) => `
-    <div class="slot" ${reorderData({type:"kpiGroupMembers", di:deptIdx, path}, mi)}>
-      <div><div class="name name-link" onclick='goToMemberCard("${m.name}")' title="クリックでメンバーカードへ">${escapeHtml(m.name)}</div></div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <span class="tag editable" onclick='editSlotMember({type:"kpiGroupMembers",di:${deptIdx},path:${pathStr}},${mi})' title="クリックで編集">${m.role ? escapeHtml(m.role) : "＋タグ"}</span>
-        <button class="icon-btn editor-only" onclick='removeKpiGroupNodeMember(${deptIdx},${pathStr},${mi})'>×</button>
-      </div>
-    </div>
-  `).join("");
-  const childBlocks = (node.children||[]).map((c, ci) => renderKpiGroupNode(c, deptIdx, [...path, ci], depth+1)).join("");
-  return `
-    <div class="${boxClass}">
-      <div class="group-head">
-        <div class="${titleClass}" onclick='renameKpiGroupNode(${deptIdx},${pathStr})' title="クリックで名前変更" style="cursor:pointer">${escapeHtml(node.name)}</div>
-        <div style="display:flex;align-items:center;gap:6px">
-          <span class="count-pill">${(node.members||[]).length}名</span>
-          <button class="icon-btn editor-only" onclick='deleteKpiGroupNode(${deptIdx},${pathStr})' title="削除">×</button>
-        </div>
-      </div>
-      ${memberRows}
-      <button class="btn-add editor-only" onclick='addKpiGroupNodeMember(${deptIdx},${pathStr})'>+ 担当者を追加</button>
-      ${childBlocks}
-      <button class="btn-add editor-only" onclick='addKpiGroupNodeChild(${deptIdx},${pathStr})' style="margin-top:8px;border-style:solid;background:#f0eee7">+ 小グループを追加</button>
-    </div>
-  `;
-}
-function addKpiDept() {
-  inputDialog("部署名（KPIの責任範囲名）", "", (name) => {
-    if (!name || !name.trim()) return;
-    state.kpiDepts.push({ name: name.trim(), lead: [], groups: [] });
-    save(); render();
-  });
-}
-function renameKpiDept(idx) {
-  inputDialog("部署名を変更", state.kpiDepts[idx].name, (v) => {
-    if (!v.trim()) return;
-    state.kpiDepts[idx].name = v.trim();
-    save(); render();
-  });
-}
-function addKpiDeptLead(idx) {
-  const exclude = state.kpiDepts[idx].lead.map(m => m.name);
-  inputDialog("役割（例：統括、補佐）", "統括", (role) => {
-    pickMember("担当者を選択", (name) => {
-      state.kpiDepts[idx].lead.push({ name, role: role || "統括" });
-      save(); render();
-    }, exclude);
-  });
-}
-function removeKpiDeptLead(idx, li) {
-  state.kpiDepts[idx].lead.splice(li,1); save(); render();
-}
-function addKpiGroup(idx) {
-  inputDialog("グループ名（例：インプット、採用人数）", "", (name) => {
-    if (!name) return;
-    state.kpiDepts[idx].groups.push({ name, members: [], children: [] });
-    save(); render();
-  });
-}
-function renameKpiGroupNode(deptIdx, path) {
-  const node = getKpiGroupNode(state.kpiDepts[deptIdx], path);
-  inputDialog("名称を変更", node.name, (v) => {
-    if (!v.trim()) return;
-    node.name = v.trim();
-    save(); render();
-  });
-}
-function deleteKpiGroupNode(deptIdx, path) {
-  confirmDialog("このグループ（中の小グループも含む）を削除しますか？", () => {
-    const dept = state.kpiDepts[deptIdx];
-    const arr = getKpiGroupParentArray(dept, path);
-    arr.splice(path[path.length-1], 1);
-    save(); render();
-  });
-}
-function addKpiGroupNodeMember(deptIdx, path) {
-  const exclude = getKpiGroupNode(state.kpiDepts[deptIdx], path).members.map(m => m.name);
-  inputDialog("役割（任意。空欄で担当者のみ）", "", (role) => {
-    pickMember("担当者を選択", (name) => {
-      const node = getKpiGroupNode(state.kpiDepts[deptIdx], path);
-      node.members.push({ name, role });
-      save(); render();
-    }, exclude);
-  });
-}
-function removeKpiGroupNodeMember(deptIdx, path, mi) {
-  getKpiGroupNode(state.kpiDepts[deptIdx], path).members.splice(mi, 1);
-  save(); render();
-}
-function addKpiGroupNodeChild(deptIdx, path) {
-  inputDialog("小グループ名（例：プロジェクト、基礎カリキュラム）", "", (name) => {
-    if (!name) return;
-    const node = getKpiGroupNode(state.kpiDepts[deptIdx], path);
-    if (!node.children) node.children = [];
-    node.children.push({ name, members: [], children: [] });
-    save(); render();
-  });
-}
-
-// 全メンバーごとに「プロジェクト/コミュニティ運営/スクール/オンボ/未アサイン」を集計したマップを返す
+// 全メンバーごとに「プロジェクト/コミュニティ運営/スクール」を集計したマップを返す
 function buildMemberMap() {
   const map = {};
-  const ensure = (n) => { if(!map[n]) map[n]={pjs:[],depts:[],onbo:false,schools:[],kpis:[]}; if(!map[n].schools) map[n].schools=[]; if(!map[n].kpis) map[n].kpis=[]; return map[n]; };
+  const ensure = (n) => { if(!map[n]) map[n]={pjs:[],depts:[],schools:[]}; if(!map[n].schools) map[n].schools=[]; return map[n]; };
   state.members.forEach(n => { if (!isDeleted(n)) ensure(n); });
   // Google Sheets由来のメンバーも追加（未登録分・未削除分）
   Object.keys(MEMBER_INFO).forEach(n => {
@@ -1871,26 +1603,6 @@ function buildMemberMap() {
     if (s.tl) add(s.tl, "TL");
     if (s.subTl) add(s.subTl, "副TL");
     s.students.forEach(n => add(n, "受講"));
-  });
-  state.onboarding.forEach(n => { ensure(n).onbo=true; });
-
-  // 新体制（KPIツリー）のアサイン。
-  // ツリーには「NoBorder」「各部署PM」のように人物ではない項目も入っているため、
-  // ここまでで実在が確認できているメンバーにだけ付ける（ensureで新規作成はしない）。
-  const attachKpi = (name, label) => {
-    if (!name) return;
-    const key = [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")].find(k => map[k]);
-    if (!key) return;
-    if (!map[key].kpis.includes(label)) map[key].kpis.push(label);
-  };
-  (state.kpiDepts || []).forEach(d => {
-    (d.lead || []).forEach(m => attachKpi(m.name, d.name + (m.role ? "(" + m.role + ")" : "")));
-    // 階層が深いので「最上位/末端(役職)」に畳んで1つのバッジにする
-    const walk = (node) => {
-      (node.members || []).forEach(m => attachKpi(m.name, d.name + "/" + node.name + (m.role ? "(" + m.role + ")" : "")));
-      (node.children || []).forEach(walk);
-    };
-    (d.groups || []).forEach(walk);
   });
   return map;
 }
@@ -1919,7 +1631,6 @@ function renderAll() {
   const assignDefs = [
     { id: "hasPj",        label: "プロジェクト所属", test: (i, n) => i.pjs.length > 0 },
     { id: "hasCommunity", label: "コミュニティ運営", test: (i, n) => i.depts.length > 0 },
-    { id: "hasKpi",       label: "新体制アサイン",   test: (i, n) => (i.kpis || []).length > 0 },
   ];
   const assignDef = assignDefs.find(d => d.id === allFilterAssign);
   const assignSummary = assignDefs.map(d => {
@@ -2068,8 +1779,6 @@ function renderMemberCard(n, info) {
         ${info.pjs.map(p=>`<span class="tag pj">${escapeHtml(p)}</span>`).join(" ")}
         ${info.depts.map(d=>`<span class="tag">${escapeHtml(d)}</span>`).join(" ")}
         ${(info.schools||[]).map(s=>`<span class="tag" style="background:var(--purple);color:var(--purple-text)">スクール:${escapeHtml(s)}</span>`).join(" ")}
-        ${(info.kpis||[]).map(k=>`<span class="tag" style="background:var(--pink);color:var(--pink-text)">新体制:${escapeHtml(k)}</span>`).join(" ")}
-        ${info.onbo?'<span class="tag" style="background:var(--orange);color:var(--orange-text)">オンボ</span>':''}
         ${(typeof mi.lastMonthHours === "number" && mi.lastMonthHours < LOW_WORKLOAD_THRESHOLD_HOURS) ? '<span class="tag" style="background:var(--green,#e6f4ea);color:var(--green-text,#2f7d4a)">稼働余裕あり</span>' : ''}
       </div>
       ${contractRemainingHTML(mi.contractStartDate)}
@@ -2329,14 +2038,6 @@ function renameGroup(idx, gi) {
   });
 }
 
-function addToList(listName) {
-  pickMember("メンバーを選択", (n) => {
-    state[listName].push(n); save(); render();
-  }, state[listName]);
-}
-function removeFromList(listName, idx) {
-  state[listName].splice(idx,1); save(); render();
-}
 
 function addMember() {
   const areaOpts = AREA_LIST.map(a => `<option value="${a}">${a}</option>`).join("");
@@ -2397,7 +2098,6 @@ function deleteMember(name) {
       if (s.subTl === name) s.subTl = "";
       s.students = s.students.filter(n => n !== name);
     });
-    state.onboarding = state.onboarding.filter(n => n !== name);
     if (state.memberOverrides && state.memberOverrides[name]) delete state.memberOverrides[name];
     save(); render();
   });
@@ -2552,7 +2252,6 @@ function saveMemberEdit(oldName) {
       if (s.subTl === oldName) s.subTl = newName;
       s.students = s.students.map(n => n === oldName ? newName : n);
     });
-    state.onboarding = state.onboarding.map(n => n === oldName ? newName : n);
   }
 
   // プロフィール情報のoverride保存（契約状況・BSバッジ・スキル分類は編集フォーム対象外なので保持する）
@@ -2583,13 +2282,10 @@ const EDIT_FNS = [
   "addGroup","deleteGroup","renameGroup","addGroupMember","removeGroupMember",
   "addSubGroup","deleteSubGroup","renameSubGroup","addSubGroupMember","removeSubGroupMember",
   "addSchool","deleteSchool","setSchoolLead","addSchoolStudent","removeSchoolStudent",
-  "addToList","removeFromList",
   "addMember","editMember","saveMemberEdit","deleteMember","restoreMember",
   "editSlotMember","saveSlotMember","reorderItem",
   "toggleNdaSigned","toggleOutsourcingSigned",
   "addCustomTab","deleteCustomTab",
-  "addKpiDept","renameKpiDept","addKpiDeptLead","removeKpiDeptLead",
-  "addKpiGroup","renameKpiGroupNode","deleteKpiGroupNode","addKpiGroupNodeMember","removeKpiGroupNodeMember","addKpiGroupNodeChild",
   "resetData",
   "backupToSheets","syncRecruitment",
 ];
