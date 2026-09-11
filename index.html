@@ -322,6 +322,13 @@
   .info-row { display: flex; gap: 8px; font-size: 13px; padding: 3px 0; }
   .info-row .k { flex: 0 0 76px; font-size: 12px; color: var(--muted); padding-top: 2px; }
   .info-row .v { flex: 1; min-width: 0; word-break: break-word; }
+
+  /* ===== 有償枠 ===== */
+  .paid-card { border-top: 4px solid var(--accent); }
+  .paid-card.専任 { border-top-color: #2f7d4a; }
+  .paid-card.兼任 { border-top-color: #4f63d2; }
+  .paid-card.移行期 { border-top-color: #a8631b; }
+  .slot .concurrent { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -711,6 +718,10 @@ function pushToSupabase() {
 
 // ====== 状態管理 ======
 const STORAGE_KEY = "rvss-org-v1";
+
+// 有償枠の大枠。この4つ以外は作らない想定なので、タブ側で順序ごと固定する
+const PAID_CATEGORIES = ["組織運営（兼任）", "プロジェクト専任", "プロジェクト兼任", "プロジェクト移行期"];
+
 let state = load();
 
 function normalizeMemberList(list) {
@@ -720,6 +731,8 @@ function ensureFields(s) {
   if (!s.deletedMembers) s.deletedMembers = [];
   if (!s.memberOverrides) s.memberOverrides = {};
   if (!s.customTabs) s.customTabs = [];
+  // 有償枠は4つの大枠で固定。中身は人が編集するので、無ければ空の枠だけ用意する
+  if (!s.paidGroups) s.paidGroups = PAID_CATEGORIES.map(name => ({ name, members: [] }));
   // 募集状況は sheets-recruitment-sync（Edge Function）が書き込む読み取り専用データ。
   // アプリ側からは編集しないため、未同期でも落ちないよう空で初期化しておく。
   if (!s.recruitment) s.recruitment = { syncedAt: "", rows: [] };
@@ -852,6 +865,7 @@ const BASE_TABS = [
   { id: "recruit", label: "プロジェクト募集状況" },
   { id: "community", label: "コミュニティ運営" },
   { id: "schools", label: "スクール受講者" },
+  { id: "paid", label: "有償枠" },
   { id: "all", label: "全メンバー" },
 ];
 function getTabs() {
@@ -996,7 +1010,9 @@ function renderContent() {
   } else if (currentTab === "schools") {
     tb.innerHTML = `<button class="btn primary editor-only" onclick="addSchool()">+ スクールを追加</button>`;
     el.innerHTML = `<div class="grid">${state.schools.map(renderSchool).join("")}</div>`;
-    } else if (currentTab === "all") {
+    } else if (currentTab === "paid") {
+    el.innerHTML = renderPaid();
+  } else if (currentTab === "all") {
     tb.innerHTML = `
       <input class="search" id="search" placeholder="メンバー検索（名前・経験・スキル・できること・やりたいこと）…" value="${escapeHtml(allFilterSearch)}" oninput="onAllSearchInput(this.value)" style="min-width:260px"/>
       <button class="btn primary editor-only" onclick="addMember()" style="margin-left:6px">+ メンバーを追加</button>
@@ -1068,6 +1084,74 @@ function slot(name, role, removeFn, reorderRef, reorderIdx) {
       <button class="icon-btn editor-only" onclick="${removeFn()}">×</button>
     </div>
   </div>`;
+}
+
+// ====== 有償枠 ======
+// 大枠ごとに1枚のカード。所属先は他タブのデータ（部署・プロジェクト・スクール）から
+// 自動で引いて表示するので、ここで二重に入力する必要はない。
+function isPaidMember(name) {
+  const keys = [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")];
+  return (state.paidGroups || []).some(g => (g.members || []).some(m => keys.includes(m.name)));
+}
+
+// 「人事/採用企画(統括)」→「人事」、「AI+(統括/川端さん直下)」→「AI+」のように大まかな名前だけ取る
+function coarseAssignName(label) {
+  return String(label).replace(/[（(][^（()）]*[)）]$/, "").split("/")[0].trim();
+}
+function concurrentTagsHTML(name) {
+  const info = buildMemberMap()[name];
+  if (!info) return "";
+  const uniq = arr => Array.from(new Set(arr.map(coarseAssignName).filter(Boolean)));
+  const tags = [];
+  uniq(info.depts).forEach(d => tags.push(`<span class="tag">${escapeHtml(d)}</span>`));
+  uniq(info.pjs).forEach(pj => tags.push(`<span class="tag pj">${escapeHtml(pj)}</span>`));
+  uniq(info.schools).forEach(sc => tags.push(`<span class="tag" style="background:var(--purple);color:var(--purple-text)">${escapeHtml(sc)}スクール</span>`));
+  return tags.length
+    ? `<div class="concurrent">${tags.join("")}</div>`
+    : `<div class="concurrent"><span class="tag" style="background:#f0eee7;color:#6b6b6b">所属なし</span></div>`;
+}
+
+function renderPaid() {
+  const total = (state.paidGroups || []).reduce((n, g) => n + (g.members || []).length, 0);
+  const cards = (state.paidGroups || []).map((g, gi) => {
+    const cls = g.name.includes("専任") ? "専任" : g.name.includes("移行期") ? "移行期" : "兼任";
+    const rows = (g.members || []).map((m, mi) => `
+      <div class="slot" ${reorderData({ type: "paidGroupMembers", gi }, mi)}>
+        <div style="min-width:0">
+          <div class="name name-link" onclick='goToMemberCard(${JSON.stringify(m.name)})' title="クリックでメンバーカードへ">${escapeHtml(m.name)}</div>
+          ${m.role ? `<div class="role">${escapeHtml(m.role)}</div>` : ""}
+          ${concurrentTagsHTML(m.name)}
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="tag editable" onclick='editSlotMember({type:"paidGroupMembers",gi:${gi}},${mi})' title="クリックで編集">${m.role ? escapeHtml(m.role) : "＋備考"}</span>
+          <button class="icon-btn editor-only" onclick="removePaidMember(${gi},${mi})">×</button>
+        </div>
+      </div>`).join("");
+    return `
+      <div class="card paid-card ${cls}">
+        <div class="card-head">
+          <div class="card-title">${escapeHtml(g.name)}</div>
+          <span class="count-pill">${(g.members || []).length}名</span>
+        </div>
+        ${rows || '<div style="font-size:13px;color:var(--muted)">まだメンバーがいません</div>'}
+        <button class="btn-add editor-only" onclick="addPaidMember(${gi})">+ メンバーを追加</button>
+      </div>`;
+  }).join("");
+  return `
+    <div class="sync-note">有償枠 ${total}名・所属先は各タブのデータから自動表示しています</div>
+    <div class="grid">${cards}</div>
+  `;
+}
+
+function addPaidMember(gi) {
+  pickMember("有償枠に追加するメンバー", (name) => {
+    state.paidGroups[gi].members.push({ name, role: "" });
+    save(); render();
+  });
+}
+function removePaidMember(gi, mi) {
+  state.paidGroups[gi].members.splice(mi, 1);
+  save(); render();
 }
 
 // ====== プロジェクト募集状況 ======
@@ -1299,6 +1383,7 @@ function getReorderableArray(ref) {
     case "projectMentors": return state.projects[ref.pi].mentors;
     case "projectStudents": return state.projects[ref.pi].students;
     case "projectGroupMembers": return state.projects[ref.pi].groups[ref.gi].members;
+    case "paidGroupMembers": return state.paidGroups[ref.gi].members;
     case "deptLead": return state.departments[ref.di].lead;
     case "deptGroupMembers": return state.departments[ref.di].groups[ref.gi].members;
     case "deptSubGroupMembers": return state.departments[ref.di].groups[ref.gi].subGroups[ref.sgi].members;
@@ -1631,6 +1716,7 @@ function renderAll() {
   const assignDefs = [
     { id: "hasPj",        label: "プロジェクト所属", test: (i, n) => i.pjs.length > 0 },
     { id: "hasCommunity", label: "コミュニティ運営", test: (i, n) => i.depts.length > 0 },
+    { id: "isPaid",       label: "有償枠",           test: (i, n) => isPaidMember(n) },
   ];
   const assignDef = assignDefs.find(d => d.id === allFilterAssign);
   const assignSummary = assignDefs.map(d => {
@@ -1763,7 +1849,7 @@ function renderMemberCard(n, info) {
   return `
     <div class="card">
       <div class="card-head">
-        <div class="card-title">${escapeHtml(n)}${mi.isBS ? ` <span class="tag" style="background:#2a2a2a;color:#fff;font-size:11px;vertical-align:middle">BS</span>` : ""}${mi.status ? ` <span class="tag" style="background:var(--pink);color:var(--pink-text);font-size:11px;vertical-align:middle">${escapeHtml(mi.status)}</span>` : ""}</div>
+        <div class="card-title">${escapeHtml(n)}${mi.isBS ? ` <span class="tag" style="background:#2a2a2a;color:#fff;font-size:11px;vertical-align:middle">BS</span>` : ""}${isPaidMember(n) ? ` <span class="tag" style="background:var(--green);color:var(--green-text);font-size:11px;vertical-align:middle">有償</span>` : ""}${mi.status ? ` <span class="tag" style="background:var(--pink);color:var(--pink-text);font-size:11px;vertical-align:middle">${escapeHtml(mi.status)}</span>` : ""}</div>
         <div style="display:flex;gap:4px;align-items:center">
           <button class="btn editor-only" onclick="editMember('${n}')" style="font-size:11px;padding:4px 10px">編集</button>
           <button class="btn editor-only" onclick="deleteMember('${n}')" title="退会扱いにする（全アサインから除外）" style="font-size:11px;padding:4px 10px;color:var(--pink-text)">退会</button>
@@ -2276,6 +2362,7 @@ function escapeHtml(s) {
 // 万一ボタンが表示されてもクリックは何も起こらない（完全な読み取り専用）。
 const EDIT_FNS = [
   "addProject","editProject","saveProject","deleteProject","addToProject","removeFromProject",
+  "addPaidMember","removePaidMember",
   "addProjectGroup","deleteProjectGroup","renameProjectGroup","addProjectGroupMember",
   "removeProjectGroupMember",
   "addDept","renameDept","addDeptLead","removeDeptLead",
