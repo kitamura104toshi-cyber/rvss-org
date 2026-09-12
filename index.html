@@ -901,9 +901,6 @@ function projectStudentNames(p) {
   (p.groups || []).forEach(g => (g.members || []).forEach(add));
   return Array.from(byKey.values());
 }
-// 前月稼働時間がこの時間未満のメンバーを「稼働余裕あり」として各カードに表示する
-const LOW_WORKLOAD_THRESHOLD_HOURS = 60;
-
 function getStats() {
   const pjAssigned = new Set();
   state.projects.forEach(p => {
@@ -928,15 +925,12 @@ function getStats() {
     }
   });
   const totalCount = Array.from(allMembers).filter(n => !isBSMember(n)).length;
-  const lowWorkloadCount = Array.from(allMembers).filter(n => {
-    const hours = (memberInfo(n) || {}).lastMonthHours;
-    return typeof hours === "number" && hours < LOW_WORKLOAD_THRESHOLD_HOURS;
-  }).length;
+  const paidCount = Array.from(allMembers).filter(n => !isBSMember(n) && isPaidMember(n)).length;
   return {
     projects: state.projects.length,
     pjAssign: pjAssigned.size,
     community: communityNames.size,
-    lowWorkload: lowWorkloadCount,
+    paid: paidCount,
     total: totalCount,
   };
 }
@@ -955,7 +949,7 @@ function renderStats() {
     { num: s.total,      lbl: "総メンバー数" },
     { num: s.pjAssign,   lbl: "プロジェクト" },
     { num: s.community,  lbl: "組織運営" },
-    { num: s.lowWorkload, lbl: "稼働余裕あり" },
+    { num: s.paid,       lbl: "有償枠" },
   ];
   document.getElementById("stats").innerHTML = items.map(i =>
     `<div class="stat"><div class="num">${i.num}</div><div class="lbl">${i.lbl}</div></div>`
@@ -1717,6 +1711,8 @@ function renderAll() {
     { id: "hasPj",        label: "プロジェクト所属", test: (i, n) => i.pjs.length > 0 },
     { id: "hasCommunity", label: "コミュニティ運営", test: (i, n) => i.depts.length > 0 },
     { id: "isPaid",       label: "有償枠",           test: (i, n) => isPaidMember(n) },
+    // 無償枠はバッジを付けない運用なので、有償枠バッジが無い＝無償枠として扱う（BSメンバーは枠の対象外）
+    { id: "isUnpaid",     label: "無償枠",           test: (i, n) => !isPaidMember(n) && !isBSMember(n) },
   ];
   const assignDef = assignDefs.find(d => d.id === allFilterAssign);
   const assignSummary = assignDefs.map(d => {
@@ -1783,7 +1779,8 @@ function renderAll() {
       const f = CONTRACT_FILTERS.find(f => f.id === allFilterContract);
       return !f || f.test(memberInfo(n) || {});
     })
-    .sort(([a],[b]) => a.localeCompare(b,"ja"));
+    // 有償枠を常に上部に。エリアで絞り込んだときも同じ並びになる
+    .sort(([a],[b]) => (isPaidMember(b) ? 1 : 0) - (isPaidMember(a) ? 1 : 0) || a.localeCompare(b,"ja"));
 
   // BSメンバー（学生メンバーではないため別枠にする。件数表示からも除く）
   const isBSName = (n) => !!(memberInfo(n) || {}).isBS;
@@ -1791,7 +1788,22 @@ function renderAll() {
   const bsFiltered = filtered.filter(([n]) => isBSName(n));
   const totalRegular = Object.keys(map).filter(n => !isBSName(n)).length;
 
-  const cards = regularFiltered.map(([n,info]) => renderMemberCard(n, info)).join("");
+  // 有償枠／無償枠で見出しを分けて表示する（片方しか居ないときは見出しを出さない）
+  const paidRows = regularFiltered.filter(([n]) => isPaidMember(n));
+  const unpaidRows = regularFiltered.filter(([n]) => !isPaidMember(n));
+  const cardsOf = rows => rows.map(([n,info]) => renderMemberCard(n, info)).join("");
+  const sectionHead = (label, count, color) =>
+    `<div style="display:flex;align-items:center;gap:8px;margin:4px 0 10px">
+      <span class="tag" style="background:${color.bg};color:${color.fg};font-size:12px">${label}</span>
+      <span style="font-size:12px;color:var(--muted)">${count}名</span>
+      <span style="flex:1;height:1px;background:var(--border)"></span>
+    </div>`;
+  const cards = (paidRows.length && unpaidRows.length)
+    ? `${sectionHead("有償枠", paidRows.length, { bg: "var(--green)", fg: "var(--green-text)" })}
+       <div class="grid">${cardsOf(paidRows)}</div>
+       <div style="margin-top:20px">${sectionHead("無償枠", unpaidRows.length, { bg: "#f0eee7", fg: "#6b6b6b" })}</div>
+       <div class="grid">${cardsOf(unpaidRows)}</div>`
+    : (regularFiltered.length ? `<div class="grid">${cardsOf(regularFiltered)}</div>` : "");
   const bsSection = bsFiltered.length > 0 ? `
     <div style="margin-top:24px;padding-top:16px;border-top:1px dashed var(--border)">
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px">BSメンバー（${bsFiltered.length}名）</div>
@@ -1834,7 +1846,7 @@ function renderAll() {
         ${allFilterContract ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllContractChange('${allFilterContract}')">絞り込みを解除</span>` : ""}
       </div>
     </div>
-    ${cards ? `<div class="grid">${cards}</div>` : '<div class="warn">該当メンバーがいません</div>'}
+    ${cards || '<div class="warn">該当メンバーがいません</div>'}
     ${bsSection}
     ${deletedSection}
   `;
@@ -1865,7 +1877,6 @@ function renderMemberCard(n, info) {
         ${info.pjs.map(p=>`<span class="tag pj">${escapeHtml(p)}</span>`).join(" ")}
         ${info.depts.map(d=>`<span class="tag">${escapeHtml(d)}</span>`).join(" ")}
         ${(info.schools||[]).map(s=>`<span class="tag" style="background:var(--purple);color:var(--purple-text)">スクール:${escapeHtml(s)}</span>`).join(" ")}
-        ${(typeof mi.lastMonthHours === "number" && mi.lastMonthHours < LOW_WORKLOAD_THRESHOLD_HOURS) ? '<span class="tag" style="background:var(--green,#e6f4ea);color:var(--green-text,#2f7d4a)">稼働余裕あり</span>' : ''}
       </div>
       ${contractRemainingHTML(mi.contractStartDate)}
       ${workloadHTML(mi.lastMonthHours)}
