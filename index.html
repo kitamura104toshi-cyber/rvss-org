@@ -661,6 +661,49 @@ function tenureDateLabel(v) {
   if (!p) return "";
   return `${p.y}年${p.m}月${p.d ? p.d + "日" : ""}`;
 }
+// ====== リファラル ======
+// 採用シートの「紹介者」列を referredBy として取り込み、そこから
+// 「この人が紹介した人」を逆引きする。
+// リファ成立は有償枠へ2名。無償枠への紹介は数に入らないが、誰を紹介したかは残す。
+// 紹介者欄は「藤原ゆうきくん」のような自由記述なので、突き合わせは緩めに行う。
+const REFERRAL_PAID_REQUIRED = 2;
+function normalizeRefName(s) {
+  return String(s || "")
+    .replace(/[（(][^）)]*[）)]/g, "")
+    .replace(/[\s　]/g, "")
+    .replace(/(さん|くん|君|ちゃん)$/, "");
+}
+function referralsBy(name) {
+  const key = normalizeRefName(name);
+  if (!key) return [];
+  return Object.entries(state.memberOverrides || {})
+    .filter(([, v]) => v && v.referredBy && normalizeRefName(v.referredBy) === key)
+    .map(([n]) => ({ name: n, paid: isPaidMember(n) }))
+    .sort((a, b) => (b.paid ? 1 : 0) - (a.paid ? 1 : 0));
+}
+function referralStatus(name) {
+  const list = referralsBy(name);
+  const paid = list.filter(r => r.paid).length;
+  return { list, paid, established: paid >= REFERRAL_PAID_REQUIRED };
+}
+// リファ情報は core 以上だけに見せる（member にはHTML自体を作らない）
+function referralHTML(name, mi) {
+  if (!roleAtLeast("core")) return "";
+  const tags = [];
+  if (mi && mi.referredBy) {
+    tags.push(`<span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">紹介元 ${escapeHtml(mi.referredBy)}</span>`);
+  }
+  const r = referralStatus(name);
+  if (r.list.length) {
+    const style = r.established
+      ? "background:var(--green);color:var(--green-text)"
+      : "background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc";
+    const detail = r.list.map(x => `${x.name}（${x.paid ? "有償" : "無償"}）`).join("、");
+    tags.push(`<span class="tag" style="${style}" title="${escapeHtml(detail)}">紹介 ${r.list.length}名・有償${r.paid}${r.established ? "・リファ成立" : ""}</span>`);
+  }
+  return tags.join(" ");
+}
+
 // 誰がいつ抜けるかは全員に見せる情報ではないので、core 以上でのみHTMLを組み立てる
 // （CSSで隠すとDOMには残ってしまうため）。
 function availableUntilHTML(mi) {
@@ -733,6 +776,14 @@ function onAllContractChange(v) {
 let allFilterTenure = "";
 function onAllTenureChange(v) {
   allFilterTenure = (allFilterTenure === v) ? "" : v;
+  const el = document.getElementById("content");
+  if (el) el.innerHTML = renderAll();
+}
+
+// 全メンバータブのリファラルフィルター（core 以上のみ。"" = すべて）
+let allFilterReferral = "";
+function onAllReferralChange(v) {
+  allFilterReferral = (allFilterReferral === v) ? "" : v;
   const el = document.getElementById("content");
   if (el) el.innerHTML = renderAll();
 }
@@ -1639,6 +1690,14 @@ function editPayMember(name) {
     <label style="font-size:13px;display:flex;align-items:center;gap:6px;margin:10px 0">
       <input id="pay-referral" type="checkbox" ${pi.referral ? "checked" : ""} style="width:auto"/> リファあり
     </label>
+    <div style="font-size:11px;color:var(--muted);margin:-4px 0 10px">
+      ${(() => {
+        const r = referralStatus(name);
+        if (!r.list.length) return "※ 採用シート上、この方を紹介者とする入会者はいません";
+        const detail = r.list.map(x => `${escapeHtml(x.name)}（${x.paid ? "有償" : "無償"}）`).join("、");
+        return `※ 紹介 ${r.list.length}名：${detail}<br>　 有償枠は${r.paid}名（成立には${REFERRAL_PAID_REQUIRED}名必要）${r.established ? " → 条件を満たしています" : ""}`;
+      })()}
+    </div>
     <label style="font-size:13px;display:flex;align-items:center;gap:6px;margin:10px 0">
       <input id="pay-school" type="checkbox" ${pi.school ? "checked" : ""} style="width:auto"/> スクール受講加算の対象
     </label>
@@ -2438,6 +2497,17 @@ function renderAll() {
     { id: "handover", label: "引き継ぎ要", test: mi => !!mi.handoverNeeded },
     { id: "unset", label: "意思未確認", test: mi => !mi.tenureIntent },
   ];
+  const REFERRAL_FILTERS = [
+    { id: "refDone", label: "リファ成立", test: n => referralStatus(n).established },
+    { id: "refSome", label: "紹介あり", test: n => referralStatus(n).list.length > 0 },
+    { id: "refFrom", label: "紹介で入会", test: n => !!(memberInfo(n) || {}).referredBy },
+  ];
+  const referralSummary = !roleAtLeast("core") ? "" : REFERRAL_FILTERS.map(f => {
+    const active = allFilterReferral === f.id;
+    const count = Object.keys(map).filter(n => !isBSMember(n) && f.test(n)).length;
+    const style = `background:${active?'#2a2a2a':'#fff'};color:${active?'#fff':'#6b6b6b'};border:1px solid ${active?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${active?'font-weight:700':''}`;
+    return `<span class="tag" style="${style}" onclick="onAllReferralChange('${f.id}')">${f.label} ${count}</span>`;
+  }).join(" ");
   const tenureSummary = !roleAtLeast("core") ? "" : TENURE_FILTERS.map(f => {
     const active = allFilterTenure === f.id;
     const count = Object.keys(map).filter(n => !isBSMember(n) && f.test(memberInfo(n) || {})).length;
@@ -2470,6 +2540,12 @@ function renderAll() {
       if (isBSMember(n)) return false;
       const f = TENURE_FILTERS.find(f => f.id === allFilterTenure);
       return !f || f.test(memberInfo(n) || {});
+    })
+    .filter(([n]) => {
+      if (!allFilterReferral || !roleAtLeast("core")) return true;
+      if (isBSMember(n)) return false;
+      const f = REFERRAL_FILTERS.find(f => f.id === allFilterReferral);
+      return !f || f.test(n);
     })
     // 有償枠を常に上部に。エリアで絞り込んだときも同じ並びになる
     .sort(([a],[b]) => (isPaidMember(b) ? 1 : 0) - (isPaidMember(a) ? 1 : 0) || a.localeCompare(b,"ja"));
@@ -2538,9 +2614,13 @@ function renderAll() {
         <span style="font-size:12px;color:var(--muted);margin-right:6px">契約状況:</span>${contractSummary}
         ${allFilterContract ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllContractChange('${allFilterContract}')">絞り込みを解除</span>` : ""}
       </div>
-      ${tenureSummary ? `<div style="margin-bottom:0;line-height:2">
+      ${tenureSummary ? `<div style="margin-bottom:10px;line-height:2">
         <span style="font-size:12px;color:var(--muted);margin-right:6px">残り活動期間:</span>${tenureSummary}
         ${allFilterTenure ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllTenureChange('${allFilterTenure}')">絞り込みを解除</span>` : ""}
+      </div>` : ""}
+      ${referralSummary ? `<div style="margin-bottom:0;line-height:2">
+        <span style="font-size:12px;color:var(--muted);margin-right:6px">リファラル:</span>${referralSummary}
+        ${allFilterReferral ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllReferralChange('${allFilterReferral}')">絞り込みを解除</span>` : ""}
       </div>` : ""}
     </div>
     ${cards || '<div class="warn">該当メンバーがいません</div>'}
@@ -2572,6 +2652,7 @@ function renderMemberCard(n, info) {
         ${mi.university ? univTagHTML(mi.university) : ""}
         ${mi.area ? areaTagHTML(mi.area) : ""}
         ${availableUntilHTML(mi)}
+        ${referralHTML(n, mi)}
         ${info.pjs.map(p=>`<span class="tag pj">${escapeHtml(p)}</span>`).join(" ")}
         ${info.depts.map(d=>`<span class="tag">${escapeHtml(d)}</span>`).join(" ")}
         ${(info.schools||[]).map(s=>`<span class="tag" style="background:var(--purple);color:var(--purple-text)">スクール:${escapeHtml(s)}</span>`).join(" ")}
