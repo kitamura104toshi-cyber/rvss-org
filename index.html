@@ -1619,40 +1619,91 @@ function payLineAmount(calc, prefix) {
   const l = calc.lines.find(x => x.label.startsWith(prefix));
   return l ? l.amount : 0;
 }
-function buildPayExportRows() {
+// 書き出し上の担当者名。既存の報酬シートが「Haruya Sasaki (佐々木晴也)」形式なので、
+// Notion連携で取れたタイトルがあればそれを使い、無ければ日本語名だけにする。
+function payExportName(name) {
+  return ((memberInfo(name) || {}).notionTitle) || name;
+}
+function payWorkNote(name) {
+  return ((payInfoOf(name).workNotes) || {})[payMonthKey()] || "";
+}
+// 所属は「人事/育成(統括)」のような詳細ラベルを大枠に丸めて重複を除く
+function payDeptLabel(name) {
+  const info = buildMemberMap()[name];
+  if (!info) return "";
+  const all = [...(info.depts || []), ...(info.pjs || [])].map(coarseAssignName);
+  return Array.from(new Set(all)).join("／");
+}
+function payEntries() {
   const map = buildMemberMap();
-  const rows = [[
-    "担当者", "区分", "最終金額", "稼働時間", "稼働時間ペナルティ", "出席率", "出席率ペナルティ",
-    "360°評価", "360°評価加算", "スクール受講加算", "マネージャー報酬", "手動調整", "手動調整の理由",
-    "PJ稼働", "PJ按分", "組織運営稼働", "組織運営按分", "PJ内訳",
-  ]];
-  const entries = Object.keys(map).filter(n => !isBSMember(n))
+  return Object.keys(map).filter(n => !isBSMember(n))
     .map(n => ({ name: n, calc: computePay(n), pi: payInfoOf(n) }))
     .sort((a, b) => (b.calc.hours || 0) - (a.calc.hours || 0));
-  for (const e of entries) {
+}
+
+// 7月分の報酬シートと同じ3タブ構成で書き出す
+function buildPaySheetRows() {
+  const label = payMonthLabel();
+  const rows = [[
+    "担当者", "最終金額", "先月の稼働時間", "稼働時間ペナルティ", "土曜定例出席率", "出席率ペナルティ",
+    "360°評価", "360°評価加算額", "スクール受講加算", "リファ有無", "マネージャー認定", "マネージャー報酬",
+    "手動調整", "手動調整の理由", `${label}の業務内容`,
+  ]];
+  for (const e of payEntries()) {
     const c = e.calc, pi = e.pi;
-    const alloc = c.payable ? payAllocation(e.name, c.total) : null;
     rows.push([
-      e.name,
-      !c.payable ? "支給対象外" : hasProjectWork(e.name) ? "プロジェクト関与" : "組織運営のみ",
+      payExportName(e.name),
       c.total,
       c.hours != null ? c.hours : "",
-      payLineAmount(c, "稼働時間ペナルティ"),
+      payLineAmount(c, "稼働時間ペナルティ") || "",
       typeof pi.attendanceRate === "number" ? pi.attendanceRate / 100 : "",
-      payLineAmount(c, "出席率ペナルティ"),
+      payLineAmount(c, "出席率ペナルティ") || "",
       typeof pi.score360 === "number" ? pi.score360 : "",
-      payLineAmount(c, "360°評価加算"),
-      payLineAmount(c, "スクール受講加算"),
-      payLineAmount(c, "マネージャー報酬"),
-      payLineAmount(c, "手動調整"),
+      payLineAmount(c, "360°評価加算") || "",
+      payLineAmount(c, "スクール受講加算") || "",
+      pi.referral ? "有" : "",
+      pi.isManager ? "〇" : "",
+      payLineAmount(c, "マネージャー報酬") || "",
+      payLineAmount(c, "手動調整") || "",
       pi.adjustNote || "",
-      alloc ? alloc.pjTotal : "",
-      alloc ? alloc.pjAmount : "",
-      alloc ? alloc.orgHours : "",
-      alloc ? alloc.orgAmount : "",
-      alloc ? alloc.rows.map(a => `${a.name} ${a.hours}h ${a.amount}`).join(" / ") : "",
+      payWorkNote(e.name),
     ]);
   }
+  return rows;
+}
+
+// 按分タブ。プロジェクト列はNotionに存在するものから自動で決まるので、
+// PJが増えてもここを直す必要はない。
+function buildPayAllocationRows() {
+  const label = payMonthLabel();
+  const entries = payEntries().filter(e => e.calc.payable);
+  const withPj = entries
+    .map(e => ({ ...e, alloc: payAllocation(e.name, e.calc.total) }))
+    .filter(e => e.alloc && e.alloc.rows.length > 0);
+  const projects = Array.from(new Set(withPj.flatMap(e => e.alloc.rows.map(r => r.name)))).sort();
+  const rows = [[
+    "担当者", "支払額", "PJ按分", "組織運営按分", "プロジェクト稼働時間", "組織運営稼働時間", `${label}合計`,
+    ...projects,
+  ]];
+  const total = [0, 0, 0, 0, 0, 0, ...projects.map(() => 0)];
+  for (const e of withPj) {
+    const a = e.alloc;
+    const byPj = Object.fromEntries(a.rows.map(r => [r.name, r.hours]));
+    const cells = [e.calc.total, a.pjAmount, a.orgAmount, a.pjTotal, a.orgHours, a.hours,
+      ...projects.map(p => byPj[p] || 0)];
+    cells.forEach((v, i) => { total[i] += Number(v) || 0; });
+    rows.push([payExportName(e.name), ...cells]);
+  }
+  rows.push(["合計", ...total.map(v => Math.round(v * 10) / 10)]);
+  return rows;
+}
+
+function buildPayWorkRows() {
+  const label = payMonthLabel();
+  const rows = [["No", "氏名", "部署", "役割", `${label}の業務内容`]];
+  payEntries().forEach((e, i) => {
+    rows.push([i + 1, e.name, payDeptLabel(e.name), e.pi.role || "", payWorkNote(e.name)]);
+  });
   return rows;
 }
 async function exportPayToSheets() {
@@ -1674,12 +1725,16 @@ async function exportPayToSheets() {
         spreadsheetId: existing,
         bookTitle: `RVSS報酬一覧 ${payMonthLabel()}分`,
         shareWith: payExportShareTo().split(/[,、\s]+/).filter(Boolean),
-        sheetTitle: payMonthLabel() + "分",
-        rows: buildPayExportRows(),
+        tabs: [
+          { title: "報酬一覧", rows: buildPaySheetRows() },
+          { title: "按分", rows: buildPayAllocationRows() },
+          { title: "業務内容", rows: buildPayWorkRows() },
+        ],
       }),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (data.url) window.open(data.url, "_blank", "noopener");
     if (data.created && data.spreadsheetId) {
       if (!state.compensation) state.compensation = { members: {} };
       if (!state.compensation.exportSheets) state.compensation.exportSheets = {};
@@ -1710,6 +1765,10 @@ function editPayMember(name) {
     <input id="pay-adjust" type="number" step="1000" value="${pi.adjust != null ? pi.adjust : ""}" placeholder="例：15000"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">手動調整の理由</label>
     <input id="pay-adjust-note" value="${escapeHtml(pi.adjustNote || "")}" placeholder="例：個別対応"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">役割（書き出しの「役割」列）</label>
+    <input id="pay-role" value="${escapeHtml(pi.role || "")}" placeholder="例：広報PM"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">${payMonthLabel()}の業務内容（月ごとに保存されます）</label>
+    <textarea id="pay-work" rows="3" placeholder="例：広報戦略、採用導線、SNS/PR施策、広報KPI整理。">${escapeHtml(payWorkNote(name))}</textarea>
     <label style="font-size:13px;display:flex;align-items:center;gap:6px;margin:10px 0">
       <input id="pay-referral" type="checkbox" ${pi.referral ? "checked" : ""} style="width:auto"/> リファあり
     </label>
@@ -1738,11 +1797,18 @@ function editPayMember(name) {
 }
 function savePayMember(name) {
   const num = id => { const v = document.getElementById(id).value; return v === "" ? null : Number(v); };
+  // 業務内容は月ごとに持つ。過去月のブックを出し直しても当時の記述が残るようにする。
+  const workNotes = { ...(payInfoOf(name).workNotes || {}) };
+  const work = (document.getElementById("pay-work").value || "").trim();
+  if (work) workNotes[payMonthKey()] = work;
+  else delete workNotes[payMonthKey()];
   const entry = {
     score360: num("pay-score"),
     attendanceRate: num("pay-att"),
     adjust: num("pay-adjust") || 0,
     adjustNote: (document.getElementById("pay-adjust-note").value || "").trim(),
+    role: (document.getElementById("pay-role").value || "").trim(),
+    workNotes,
     referral: document.getElementById("pay-referral").checked,
     school: document.getElementById("pay-school").checked,
     isManager: document.getElementById("pay-manager").checked,
