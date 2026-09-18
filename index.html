@@ -176,11 +176,21 @@
 
   /* ===== 閲覧モード ===== */
   body.view-mode .editor-only { display: none !important; }
+  body:not(.core-mode) .core-only { display: none !important; }
   body.view-mode .tag.editable { cursor: default; pointer-events: none; }
   body.view-mode .tag.editable:hover { outline: none; }
   body.view-mode .card-title[onclick],
   body.view-mode .group-title[onclick],
   body.view-mode .subgroup-title[onclick] { cursor: default !important; pointer-events: none; }
+  .recruit-select {
+    border: none; border-radius: 999px; padding: 4px 10px;
+    font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
+  }
+  .recruit-detail { margin-top: 8px; }
+  .recruit-detail-v {
+    font-size: 12px; line-height: 1.7; white-space: pre-wrap;
+    margin-bottom: 10px; color: var(--text);
+  }
   .mode-badge {
     display: inline-block;
     font-size: 11px;
@@ -665,14 +675,29 @@ const SUPABASE_ANON_KEY = IS_LOCAL_DEV ? DEV_SUPABASE_ANON_KEY : PROD_SUPABASE_A
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const ROW_ID = "main";
 
-// ====== 編集モード判定（URLパラメータで切り替え） ======
-// 共有URL: https://rvss-org.vercel.app/           → 閲覧モード（誰でも）
-// 編集URL: https://rvss-org.vercel.app/?key=<KEY> → 編集モード（オーナーのみ）
-const EDIT_KEY = "kitamura-rvss-admin-2026";  // ← 必要なら書き換えて再デプロイ
-const isEditMode = new URLSearchParams(location.search).get("key") === EDIT_KEY;
+// ====== ロール判定（URLパラメータで切り替え） ======
+// 共有URL: /                     → member（2タブ・編集不可）
+// コアメン: /?key=rvss-core-2026 → core（6タブ・募集の進捗ステータスだけ編集可）
+// 管理者:   /?key=<ADMIN_KEY>    → admin（全タブ・全編集可）
+// キーは index.html に含まれるので機密性の保証ではない。あくまでUI上の出し分けとして扱う。
+const ROLE_KEYS = {
+  admin: "kitamura-rvss-admin-2026",
+  core:  "rvss-core-2026",
+};
+const ROLE_RANK = { member: 0, core: 1, admin: 2 };
+function resolveRole(key) {
+  if (key === ROLE_KEYS.admin) return "admin";
+  if (key === ROLE_KEYS.core) return "core";
+  return "member";
+}
+const ROLE = resolveRole(new URLSearchParams(location.search).get("key"));
+function roleAtLeast(r) { return ROLE_RANK[ROLE] >= ROLE_RANK[r]; }
+// 既存コードは isEditMode を参照し続けるので、admin のエイリアスとして残す
+const isEditMode = ROLE === "admin";
 
 function applyMode() {
   document.body.classList.toggle("view-mode", !isEditMode);
+  document.body.classList.toggle("core-mode", roleAtLeast("core"));
   updateModeBadge();
 }
 function updateModeBadge() {
@@ -685,9 +710,14 @@ function updateModeBadge() {
     badge.className = "mode-badge";
     h1.appendChild(badge);
   }
-  if (isEditMode) {
-    badge.textContent = "編集モード";
+  if (ROLE === "admin") {
+    badge.textContent = "管理者モード";
     badge.className = "mode-badge edit";
+    badge.style.display = "";
+  } else if (ROLE === "core") {
+    badge.textContent = "コアメンバー";
+    badge.className = "mode-badge view";
+    badge.style.display = "";
   } else {
     badge.style.display = "none";
   }
@@ -701,9 +731,22 @@ function setStatus(text, color) {
 }
 
 let writeTimer = null;
+// クラウド側の初回読み込みが終わるまでは true にしない。
+// これが false のまま push すると、localStorage が空の端末が INITIAL シードで
+// 本番データを上書きしてしまう（オフライン・初回アクセス・fetch失敗など）。
+let cloudLoaded = false;
 function pushToSupabase() {
-  // 閲覧モードでは絶対にクラウドDBへ書き込まない（読み取り専用）
-  if (!isEditMode) return;
+  // member（閲覧モード）は絶対にクラウドDBへ書き込まない（読み取り専用）。
+  // core は募集ステータスの上書きだけ許可されており（CORE_FNS 以外は disableFns で無効化済み）、
+  // その保存がクラウドに届かないと同期時に消えてしまうため、admin 限定にはしない。
+  if (!roleAtLeast("core")) return;
+  // クラウド読み込み完了前の保存は、ローカルの古い/初期状態で本番データを
+  // 上書きしてしまう危険があるため拒否する（初回シード投入は applyRemote/fetch側で
+  // cloudLoaded を先に true にしてから pushToSupabase を呼ぶので通る）。
+  if (!cloudLoaded) {
+    setStatus("⚠️ まだ読み込めていないため保存できません（再読み込みしてください）", "#b73a4a");
+    return;
+  }
   setStatus("⏳ 同期中…");
   clearTimeout(writeTimer);
   writeTimer = setTimeout(() => {
@@ -736,6 +779,9 @@ function ensureFields(s) {
   // 募集状況は sheets-recruitment-sync（Edge Function）が書き込む読み取り専用データ。
   // アプリ側からは編集しないため、未同期でも落ちないよう空で初期化しておく。
   if (!s.recruitment) s.recruitment = { syncedAt: "", rows: [] };
+  // アプリ側で上書きした募集ステータス。同期（sheets-recruitment-sync）はこの層に触らないので、
+  // 5時間ごとの取り込みでアプリの編集が消えることはない。
+  if (!s.recruitOverrides) s.recruitOverrides = {};
   (s.projects || []).forEach(p => {
     p.mentors = normalizeMemberList(p.mentors);
     p.students = normalizeMemberList(p.students);
@@ -757,6 +803,7 @@ function save() {
 // Supabase リアルタイム購読：他端末・他ユーザーの変更を即反映
 function applyRemote(remote) {
   if (!remote) return;
+  cloudLoaded = true; // クラウドの値を受け取れたので、以降の push を許可する
   if (JSON.stringify(remote) === JSON.stringify(state)) {
     setStatus("✅ 同期済み", "#2f7d4a");
     return;
@@ -771,11 +818,14 @@ function applyRemote(remote) {
 sb.from("org_state").select("data").eq("id", ROW_ID).maybeSingle()
   .then(({ data: row, error }) => {
     if (error) {
-      setStatus("❌ 接続エラー: " + error.message, "#b73a4a");
+      // 読み込みが終わっていないので cloudLoaded は false のまま
+      // （= それまでの編集は pushToSupabase で保存されず、上書き事故を防ぐ）
+      setStatus("❌ 接続エラー（読み込み前のため編集は保存されません）: " + error.message, "#b73a4a");
       return;
     }
     if (!row) {
-      // 初回：現在のローカル state をクラウドにアップロード
+      // 初回：現在のローカル state をクラウドにアップロード（これは意図的な初回シードなので許可する）
+      cloudLoaded = true;
       pushToSupabase();
       return;
     }
@@ -803,7 +853,19 @@ function resetData() {
   );
 }
 function exportJSON() {
-  const blob = new Blob([JSON.stringify(state, null, 2)], {type:"application/json"});
+  // member は応募者の氏名・メアドを閲覧できないロールなので、エクスポートJSONにも含めない。
+  // state 自体は書き換えず、ディープコピー上でだけ該当フィールドを削除する。
+  let data = state;
+  if (!roleAtLeast("core")) {
+    data = JSON.parse(JSON.stringify(state));
+    ((data.recruitment && data.recruitment.rows) || []).forEach(row => {
+      delete row.studentNames;
+      delete row.studentEmails;
+      delete row.owner;
+      delete row.note;
+    });
+  }
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "rvss-org-" + new Date().toISOString().slice(0,10) + ".json";
@@ -859,17 +921,21 @@ async function syncRecruitment() {
 }
 
 // ====== タブ ======
-let currentTab = "projects";
+// 上位ロールは下位ロールのタブをすべて含む（積み上げ式）
 const BASE_TABS = [
-  { id: "projects", label: "プロジェクト" },
-  { id: "recruit", label: "プロジェクト募集状況" },
-  { id: "community", label: "コミュニティ運営" },
-  { id: "schools", label: "スクール受講者" },
-  { id: "paid", label: "有償枠" },
-  { id: "all", label: "全メンバー" },
+  { id: "all",       label: "全メンバー",           minRole: "member" },
+  { id: "recruit",   label: "プロジェクト募集状況", minRole: "member" },
+  { id: "projects",  label: "プロジェクト",         minRole: "core" },
+  { id: "community", label: "コミュニティ運営",     minRole: "core" },
+  { id: "schools",   label: "スクール受講者",       minRole: "core" },
+  { id: "paid",      label: "有償枠",               minRole: "core" },
 ];
+// core 以上は今までどおりプロジェクトタブから始める。member は先頭の全メンバー。
+let currentTab = roleAtLeast("core") ? "projects" : "all";
 function getTabs() {
-  return BASE_TABS.concat(state.customTabs.map(t => ({ id: t.id, label: t.label, custom: true })));
+  const base = BASE_TABS.filter(t => roleAtLeast(t.minRole));
+  if (!roleAtLeast("core")) return base;
+  return base.concat(state.customTabs.map(t => ({ id: t.id, label: t.label, custom: true, minRole: "core" })));
 }
 
 // ====== 集計 ======
@@ -965,7 +1031,11 @@ function renderTabs() {
   document.getElementById("tabs").innerHTML = tabsHtml +
     `<button class="tab-add editor-only" onclick="addCustomTab()">+ タブを追加</button>`;
 }
-function setTab(id) { currentTab = id; render(); }
+function setTab(id) {
+  const tabs = getTabs();
+  currentTab = tabs.some(t => t.id === id) ? id : ((tabs[0] || {}).id || "all");
+  render();
+}
 
 function addCustomTab() {
   inputDialog("新しいタブ名", "", (name) => {
@@ -1194,6 +1264,30 @@ function normalizeProjectKey(name) {
 // アプリ上のプロジェクト（＝枠情報）を基準に並べ、シートにしか無い事業名は後ろに続ける。
 // 同じ事業名でフォーム回答が複数ある場合はタイムスタンプが最新のものを採用する
 // （同期側で既に1件に絞られているが、古いデータが残っていても壊れないよう二重に判定する）。
+// 表示するステータスは「アプリの上書きがあればそれ、無ければシート由来の値」。
+function recruitOverrideOf(e) {
+  return (state.recruitOverrides || {})[e.key] || null;
+}
+function resolveRecruitStatus(e) {
+  const ov = recruitOverrideOf(e);
+  if (ov && ov.recruitStatus) return ov.recruitStatus;
+  return e.row ? e.row.recruitStatus : "未募集";
+}
+function resolveWebTestStatus(e) {
+  const ov = recruitOverrideOf(e);
+  if (ov && typeof ov.webTestStatus === "string") return ov.webTestStatus;
+  return e.row ? e.row.webTestStatus : "";
+}
+function hasRecruitOverride(e) {
+  const ov = recruitOverrideOf(e);
+  return !!(ov && (ov.recruitStatus || typeof ov.webTestStatus === "string"));
+}
+function recruitOverrideAt(e) {
+  const ov = recruitOverrideOf(e);
+  if (!ov || !ov.updatedAt) return "";
+  return new Date(ov.updatedAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function buildRecruitEntries() {
   const rows = (state.recruitment && state.recruitment.rows) || [];
   const ts = r => {
@@ -1223,15 +1317,15 @@ function buildRecruitEntries() {
     used.add(nameKey);
     if (srcKey) used.add(srcKey);
     const row = latestByKey.get(nameKey) || (srcKey ? latestByKey.get(srcKey) : null);
-    return { name: p.name, project: p, row: row || null };
+    return { key: srcKey || nameKey, name: p.name, project: p, row: row || null };
   });
   latestByKey.forEach((r, key) => {
-    if (!used.has(key)) entries.push({ name: r.project, project: null, row: r });
+    if (!used.has(key)) entries.push({ key, name: r.project, project: null, row: r });
   });
 
   // 募集が動いているものを上位に。sort は安定なので、同ステータス内の並びは元のまま保たれる。
   const rank = e => {
-    const i = RECRUIT_STATUS_ORDER.indexOf(e.row ? e.row.recruitStatus : "未募集");
+    const i = RECRUIT_STATUS_ORDER.indexOf(resolveRecruitStatus(e));
     return i < 0 ? RECRUIT_STATUS_ORDER.length : i;
   };
   return entries.sort((a, b) => rank(a) - rank(b));
@@ -1244,6 +1338,30 @@ function onRecruitViewChange(v) {
   recruitView = v;
   const el = document.getElementById("content");
   if (el) el.innerHTML = renderRecruit();
+}
+
+// core 以上が募集の進捗ステータスを直接いじるための操作。
+// シート側を更新しない運用になっているため、アプリの値を正とする。
+function setRecruitOverrideField(key, field, value) {
+  if (!key) return;
+  if (!state.recruitOverrides) state.recruitOverrides = {};
+  const cur = state.recruitOverrides[key] || {};
+  state.recruitOverrides[key] = { ...cur, [field]: value, updatedAt: new Date().toISOString() };
+  // render() でカードが並び替わるとページが一番上に飛ぶことがあるので、
+  // スクロール位置を保存して復元する
+  const y = window.scrollY;
+  save(); render();
+  window.scrollTo(0, y);
+}
+function setRecruitStatus(key, value) { setRecruitOverrideField(key, "recruitStatus", value); }
+function setRecruitWebTest(key, value) { setRecruitOverrideField(key, "webTestStatus", value); }
+function clearRecruitOverride(key) {
+  if (!key || !state.recruitOverrides) return;
+  delete state.recruitOverrides[key];
+  // こちらも同様に、再描画によるスクロール位置ジャンプを防ぐ
+  const y = window.scrollY;
+  save(); render();
+  window.scrollTo(0, y);
 }
 
 // 実際に学生を探している状態（枠が空いていても未募集なら「募集中」とは出さない）
@@ -1286,10 +1404,101 @@ function recruitMentor(e) {
     || (e.project && (e.project.mentors || []).length ? e.project.mentors.map(m => m.name).join("、") : "");
 }
 
+// core 以上には <select> を出し、member にはバッジだけを出す。
+function recruitStatusControlHTML(e) {
+  const status = resolveRecruitStatus(e);
+  if (!roleAtLeast("core")) return recruitStatusTagHTML(status);
+  const opts = RECRUIT_STATUS_ORDER.map(s =>
+    `<option value="${escapeHtml(s)}"${s === status ? " selected" : ""}>${escapeHtml(s)}</option>`).join("");
+  return `<select class="recruit-select" style="${recruitStatusStyle(status)}" onchange="setRecruitStatus(${jsArg(e.key)}, this.value)">${opts}</select>`;
+}
+const WEBTEST_CHOICES = ["", "発行依頼中", "実施中", "実施済み"];
+function recruitWebTestControlHTML(e) {
+  const v = resolveWebTestStatus(e);
+  if (!roleAtLeast("core")) {
+    return v
+      ? `<span class="tag" style="${WEBTEST_STATUS_STYLE[v] || "background:#f0eee7;color:#6b6b6b"}">${escapeHtml(v)}</span>`
+      : `<span class="tag" style="background:#f0eee7;color:#6b6b6b">なし</span>`;
+  }
+  const opts = WEBTEST_CHOICES.map(s =>
+    `<option value="${escapeHtml(s)}"${s === v ? " selected" : ""}>${s ? escapeHtml(s) : "なし"}</option>`).join("");
+  return `<select class="recruit-select" style="${WEBTEST_STATUS_STYLE[v] || "background:#f0eee7;color:#6b6b6b"}" onchange="setRecruitWebTest(${jsArg(e.key)}, this.value)">${opts}</select>`;
+}
+// アプリで上書きされていることを示す印と、シートの値に戻すボタン
+function recruitOverrideNoteHTML(e) {
+  if (!hasRecruitOverride(e)) return "";
+  const at = recruitOverrideAt(e);
+  return `<div style="margin-top:8px;font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+    <span class="tag" style="background:var(--blue);color:var(--blue-text);font-size:11px">アプリで更新${at ? " " + escapeHtml(at) : ""}</span>
+    <span class="core-only" style="cursor:pointer;text-decoration:underline" onclick="clearRecruitOverride(${jsArg(e.key)})">シートの値に戻す</span>
+  </div>`;
+}
+
+// 詳細は既定で閉じる。開いたカードだけ覚えておき、再描画しても開いたままにする。
+const openRecruitKeys = new Set();
+function toggleRecruitDetail(key) {
+  if (openRecruitKeys.has(key)) openRecruitKeys.delete(key);
+  else openRecruitKeys.add(key);
+  const el = document.getElementById("content");
+  if (el) el.innerHTML = renderRecruit();
+}
+
+// 応募している学生の名前。個人情報なので member では HTML を組み立てない。
+const APPLICANT_STATUSES = ["応募あり", "PJ連携中", "アサイン確定", "アサイン済み"];
+function recruitApplicantsHTML(e) {
+  if (!roleAtLeast("core")) return "";
+  const names = (e.row && e.row.studentNames) || [];
+  if (names.length === 0) return "";
+  if (!APPLICANT_STATUSES.includes(resolveRecruitStatus(e))) return "";
+  const known = buildMemberMap();
+  const chips = names.map(n => {
+    const key = String(n).replace(/[\s　]/g, "");
+    const hit = Object.keys(known).find(m => m.replace(/[\s　]/g, "") === key);
+    return hit
+      ? `<span class="tag name-link" style="background:var(--green);color:var(--green-text)" onclick="goToMemberCard(${jsArg(hit)})">${escapeHtml(n)}</span>`
+      : `<span class="tag" style="background:var(--green);color:var(--green-text)">${escapeHtml(n)}</span>`;
+  }).join(" ");
+  return `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">
+    <span style="font-size:11px;color:var(--muted);margin-right:2px">応募</span>${chips}
+  </div>`;
+}
+
+// 募集要項。member にも見せる項目と core 以上だけの項目を分ける。
+function recruitDetailHTML(e) {
+  const r = e.row;
+  if (!r) return "";
+  const open = openRecruitKeys.has(e.key);
+  const rows = [
+    ["稼働時間と期間", r.workload],
+    ["プロジェクト概要", r.summary],
+    ["担ってほしい役割", r.role],
+    ["求める人物像・スキル", r.wanted],
+    ["得られるスキル・経験", r.gains],
+    ["フィードバック形式", r.feedback],
+    ["メンター", r.mentor],
+  ];
+  if (roleAtLeast("core")) {
+    rows.push(["記入者", r.owner]);
+    rows.push(["連絡事項", r.note]);
+    rows.push(["応募者メアド", ((r.studentEmails || []).join("、"))]);
+  }
+  const filled = rows.filter(([, v]) => v);
+  if (filled.length === 0) return "";
+  const body = open
+    ? `<div class="recruit-detail">${filled.map(([k, v]) =>
+        `<div class="section-label">${escapeHtml(k)}</div>
+         <div class="recruit-detail-v">${escapeHtml(v)}</div>`).join("")}</div>`
+    : "";
+  return `<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border)">
+    <span style="font-size:12px;color:var(--accent);cursor:pointer" onclick="toggleRecruitDetail(${jsArg(e.key)})">${open ? "▲ 募集要項を閉じる" : "▼ 募集要項を見る"}</span>
+    ${body}
+  </div>`;
+}
+
 // 案3：空き枠を主役にしたカード（学生向け）
 function renderRecruitCardStudent(e) {
   const r = e.row;
-  const status = r ? r.recruitStatus : "未募集";
+  const status = resolveRecruitStatus(e);
   const { open } = recruitSlots(e.project);
   const recruiting = open > 0 && RECRUITING_STATUSES.includes(status);
 
@@ -1299,8 +1508,9 @@ function renderRecruitCardStudent(e) {
   else                    { num = 0;    unit = "枠 満員";     color = "var(--muted)"; }
 
   const mentor = recruitMentor(e);
-  const webTest = r && r.webTestRequested
-    ? ` <span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">Webテスト必須・${escapeHtml(r.webTestStatus)}</span>`
+  const webTestStatus = resolveWebTestStatus(e);
+  const webTest = webTestStatus
+    ? ` <span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">Webテスト必須・${escapeHtml(webTestStatus)}</span>`
     : "";
 
   return `
@@ -1311,9 +1521,12 @@ function renderRecruitCardStudent(e) {
       </div>
       <div class="card-title" style="font-size:14px;margin-bottom:2px">${escapeHtml(e.name)}</div>
       ${mentor ? `<div class="mu" style="font-size:12px;color:var(--muted);margin-bottom:10px">メンター ${escapeHtml(mentor)}</div>` : `<div style="margin-bottom:10px"></div>`}
-      <div style="display:flex;flex-wrap:wrap;gap:4px">
-        ${recruitStatusTagHTML(status)}${webTest}
+      <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">
+        ${recruitStatusControlHTML(e)}${webTest}
       </div>
+      ${recruitOverrideNoteHTML(e)}
+      ${recruitApplicantsHTML(e)}
+      ${recruitDetailHTML(e)}
     </div>
   `;
 }
@@ -1332,15 +1545,18 @@ function recruitStepIndex(status) {
 
 function renderRecruitCardProgress(e) {
   const r = e.row;
-  const status = r ? r.recruitStatus : "未募集";
+  const status = resolveRecruitStatus(e);
   const { cap, filled, open } = recruitSlots(e.project);
   const slotsPill = cap === null
     ? `<span class="count-pill" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">アプリ未登録</span>`
     : `<span class="count-pill" ${open > 0 ? 'style="background:var(--orange);color:var(--orange-text)"' : ""}>${filled}/${cap}名${open > 0 ? `・空き${open}` : ""}</span>`;
 
   const idx = recruitStepIndex(status);
+  // idx < 0（未募集・辞退）の場合、ステータスは下の info-row 側で必ず表示されるので、
+  // ここで重複してドロップダウンを出さない（同じカードに2つ出ると片方を変えても
+  // もう片方が再描画まで古い値のまま残ってしまう）
   const body = idx < 0
-    ? `<div style="margin:12px 0">${recruitStatusTagHTML(status)}</div>`
+    ? ""
     : `<div class="track">${RECRUIT_STEPS.map((s, i) => `
         <div class="step ${i <= idx ? "done" : ""} ${i === idx ? "current" : ""}">
           <div class="bar"></div><div class="lbl">${s}</div>
@@ -1357,11 +1573,13 @@ function renderRecruitCardProgress(e) {
       </div>
       ${body}
       <div style="padding-top:8px;border-top:1px dashed var(--border)">
+        ${infoRow("ステータス", recruitStatusControlHTML(e))}
         ${infoRow("メンター", escapeHtml(mentor))}
-        ${infoRow("Webテスト", r && r.webTestRequested
-          ? `<span class="tag" style="${WEBTEST_STATUS_STYLE[r.webTestStatus] || "background:#f0eee7;color:#6b6b6b"}">${escapeHtml(r.webTestStatus)}</span>`
-          : `<span class="tag" style="background:#f0eee7;color:#6b6b6b">なし</span>`)}
+        ${infoRow("Webテスト", recruitWebTestControlHTML(e))}
       </div>
+      ${recruitOverrideNoteHTML(e)}
+      ${recruitApplicantsHTML(e)}
+      ${recruitDetailHTML(e)}
     </div>
   `;
 }
@@ -2368,10 +2586,11 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 
-// ====== 閲覧モードの編集ロック ======
-// CSSで隠すだけでなく、編集系の関数自体を無効化して操作不能にする。
-// 万一ボタンが表示されてもクリックは何も起こらない（完全な読み取り専用）。
-const EDIT_FNS = [
+// 属性内に JS の引数として埋め込む。キーや名前に ' や " が含まれても壊れない。
+function jsArg(s) { return escapeHtml(JSON.stringify(String(s))); }
+
+// admin だけが実行できる操作（メンバー・PJ・部署・スクール・有償枠の編集すべて）
+const ADMIN_FNS = [
   "addProject","editProject","saveProject","deleteProject","addToProject","removeFromProject",
   "addPaidMember","removePaidMember",
   "addProjectGroup","deleteProjectGroup","renameProjectGroup","addProjectGroupMember",
@@ -2387,13 +2606,16 @@ const EDIT_FNS = [
   "resetData",
   "backupToSheets","syncRecruitment",
 ];
-if (!isEditMode) {
-  EDIT_FNS.forEach(fn => {
-    if (typeof window[fn] === "function") {
-      window[fn] = function () { /* 閲覧モードでは編集不可 */ };
-    }
-  });
-}
+// core 以上が実行できる操作（募集の進捗ステータスまわりだけ）
+const CORE_FNS = ["setRecruitStatus", "setRecruitWebTest", "clearRecruitOverride"];
+
+const disableFns = (names) => names.forEach(fn => {
+  if (typeof window[fn] === "function") {
+    window[fn] = function () { /* このロールでは実行不可 */ };
+  }
+});
+if (!roleAtLeast("admin")) disableFns(ADMIN_FNS);
+if (!roleAtLeast("core")) disableFns(CORE_FNS);
 
 render();
 </script>
