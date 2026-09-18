@@ -2397,10 +2397,8 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 
-// ====== 閲覧モードの編集ロック ======
-// CSSで隠すだけでなく、編集系の関数自体を無効化して操作不能にする。
-// 万一ボタンが表示されてもクリックは何も起こらない（完全な読み取り専用）。
-const EDIT_FNS = [
+// admin だけが実行できる操作（メンバー・PJ・部署・スクール・有償枠の編集すべて）
+const ADMIN_FNS = [
   "addProject","editProject","saveProject","deleteProject","addToProject","removeFromProject",
   "addPaidMember","removePaidMember",
   "addProjectGroup","deleteProjectGroup","renameProjectGroup","addProjectGroupMember",
@@ -2416,13 +2414,16 @@ const EDIT_FNS = [
   "resetData",
   "backupToSheets","syncRecruitment",
 ];
-if (!isEditMode) {
-  EDIT_FNS.forEach(fn => {
-    if (typeof window[fn] === "function") {
-      window[fn] = function () { /* 閲覧モードでは編集不可 */ };
-    }
-  });
-}
+// core 以上が実行できる操作（募集の進捗ステータスまわりだけ）
+const CORE_FNS = ["setRecruitStatus", "setRecruitWebTest", "clearRecruitOverride"];
+
+const disableFns = (names) => names.forEach(fn => {
+  if (typeof window[fn] === "function") {
+    window[fn] = function () { /* このロールでは実行不可 */ };
+  }
+});
+if (!roleAtLeast("admin")) disableFns(ADMIN_FNS);
+if (!roleAtLeast("core")) disableFns(CORE_FNS);
 
 render();
 </script>
