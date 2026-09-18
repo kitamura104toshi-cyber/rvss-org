@@ -633,35 +633,63 @@ function univTagHTML(univ) {
   return `<span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">${escapeHtml(univ)}</span>`;
 }
 
-// ====== 在籍予定（卒業・離脱の見込み） ======
-// memberOverrides[name].availableUntil に "YYYY-MM" で持ち、残り月数は都度計算する。
-// 期限そのものを保存しておけば、月をまたいでも表示が自動で追随する。
+// ====== 在籍予定（卒業・継続の意思確認） ======
+// 卒業タイミングのヒアリング結果を memberOverrides に持つ。
+//   tenureIntent       "卒業" | "継続" | ""（未確認）
+//   availableUntil     "YYYY-MM" または "YYYY-MM-DD"（ヒアリング表の「卒業関連日」）
+//   handoverNeeded     引き継ぎ対応が要るか
+//   availableUntilNote 継続予定期間・コメントをまとめた自由記述
+// 残り月数は保存せず都度計算する。期日そのものを持てば月をまたいでも表示が追随する。
 const GRADUATION_SOON_MONTHS = 6;
-function parseYM(ym) {
-  const m = /^(\d{4})-(\d{1,2})$/.exec(String(ym || "").trim());
+function parseTenureDate(v) {
+  const m = /^(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?$/.exec(String(v || "").trim());
   if (!m) return null;
   const mo = Number(m[2]);
-  return mo >= 1 && mo <= 12 ? { y: Number(m[1]), m: mo } : null;
+  const d = m[3] ? Number(m[3]) : null;
+  if (mo < 1 || mo > 12) return null;
+  if (d !== null && (d < 1 || d > 31)) return null;
+  return { y: Number(m[1]), m: mo, d };
 }
-function monthsUntilYM(ym) {
-  const p = parseYM(ym);
+function monthsUntilYM(v) {
+  const p = parseTenureDate(v);
   if (!p) return null;
   const now = new Date();
   return (p.y - now.getFullYear()) * 12 + (p.m - (now.getMonth() + 1));
+}
+function tenureDateLabel(v) {
+  const p = parseTenureDate(v);
+  if (!p) return "";
+  return `${p.y}年${p.m}月${p.d ? p.d + "日" : ""}`;
 }
 // 誰がいつ抜けるかは全員に見せる情報ではないので、core 以上でのみHTMLを組み立てる
 // （CSSで隠すとDOMには残ってしまうため）。
 function availableUntilHTML(mi) {
   if (!roleAtLeast("core")) return "";
-  const p = parseYM(mi && mi.availableUntil);
-  if (!p) return "";
-  const left = monthsUntilYM(mi.availableUntil);
-  const leftLabel = left < 0 ? "期限超過" : left === 0 ? "今月まで" : `残り${left}ヶ月`;
-  const style = left <= GRADUATION_SOON_MONTHS
-    ? "background:var(--orange);color:var(--orange-text)"
-    : "background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc";
+  const intent = (mi && mi.tenureIntent) || "";
+  const left = monthsUntilYM(mi && mi.availableUntil);
   const note = ((mi && mi.availableUntilNote) || "").trim();
-  return `<span class="tag" style="${style}"${note ? ` title="${escapeHtml(note)}"` : ""}>在籍 ${p.y}年${p.m}月まで・${leftLabel}${note ? " ※" : ""}</span>`;
+  if (!intent && left === null && !mi.handoverNeeded) return "";
+
+  const tags = [];
+  if (intent) {
+    const s = intent === "卒業"
+      ? "background:var(--pink);color:var(--pink-text)"
+      : "background:var(--green);color:var(--green-text)";
+    tags.push(`<span class="tag" style="${s}">${escapeHtml(intent)}予定</span>`);
+  }
+  if (left !== null) {
+    const leftLabel = left < 0 ? "経過済み" : left === 0 ? "今月" : `あと${left}ヶ月`;
+    const s = left <= GRADUATION_SOON_MONTHS
+      ? "background:var(--orange);color:var(--orange-text)"
+      : "background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc";
+    tags.push(`<span class="tag" style="${s}"${note ? ` title="${escapeHtml(note)}"` : ""}>${tenureDateLabel(mi.availableUntil)}・${leftLabel}${note ? " ※" : ""}</span>`);
+  } else if (note) {
+    tags.push(`<span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc" title="${escapeHtml(note)}">在籍予定 ※</span>`);
+  }
+  if (mi.handoverNeeded) {
+    tags.push(`<span class="tag" style="background:var(--orange);color:var(--orange-text)">引き継ぎ要</span>`);
+  }
+  return tags.join(" ");
 }
 
 let allFilterSearch = "";
@@ -2261,9 +2289,11 @@ function renderAll() {
 
   // 在籍予定フィルター（core 以上のみ。引き継ぎ計画で「もうすぐ抜ける人」を拾うため）
   const TENURE_FILTERS = [
-    { id: "soon", label: `${GRADUATION_SOON_MONTHS}ヶ月以内に卒業`, test: mi => { const l = monthsUntilYM(mi.availableUntil); return l !== null && l <= GRADUATION_SOON_MONTHS; } },
-    { id: "within1y", label: "1年以内に卒業", test: mi => { const l = monthsUntilYM(mi.availableUntil); return l !== null && l <= 12; } },
-    { id: "unset", label: "在籍予定 未設定", test: mi => monthsUntilYM(mi.availableUntil) === null },
+    { id: "leaving", label: "卒業予定", test: mi => mi.tenureIntent === "卒業" },
+    { id: "staying", label: "継続予定", test: mi => mi.tenureIntent === "継続" },
+    { id: "soon", label: `${GRADUATION_SOON_MONTHS}ヶ月以内`, test: mi => { const l = monthsUntilYM(mi.availableUntil); return l !== null && l <= GRADUATION_SOON_MONTHS; } },
+    { id: "handover", label: "引き継ぎ要", test: mi => !!mi.handoverNeeded },
+    { id: "unset", label: "意思未確認", test: mi => !mi.tenureIntent },
   ];
   const tenureSummary = !roleAtLeast("core") ? "" : TENURE_FILTERS.map(f => {
     const active = allFilterTenure === f.id;
@@ -2819,10 +2849,19 @@ function editMember(name) {
     </datalist>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">契約開始日（1年ごとに自動更新）</label>
     <input id="em-contract-start" type="date" value="${escapeHtml(current.contractStartDate||"")}"/>
-    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">在籍予定（いつまで在籍するか。年月で入力）</label>
-    <input id="em-until" value="${escapeHtml(current.availableUntil||"")}" placeholder="例：2027-03"/>
-    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">在籍予定の備考</label>
-    <input id="em-until-note" value="${escapeHtml(current.availableUntilNote||"")}" placeholder="例：就活次第で早まる可能性あり"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">継続意思</label>
+    <select id="em-intent">
+      <option value=""${!current.tenureIntent?" selected":""}>（未確認）</option>
+      <option value="継続"${current.tenureIntent==="継続"?" selected":""}>継続</option>
+      <option value="卒業"${current.tenureIntent==="卒業"?" selected":""}>卒業</option>
+    </select>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">卒業関連日（年月、または年月日）</label>
+    <input id="em-until" value="${escapeHtml(current.availableUntil||"")}" placeholder="例：2027-03-31"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">継続予定期間・コメント</label>
+    <input id="em-until-note" value="${escapeHtml(current.availableUntilNote||"")}" placeholder="例：大学卒業まで／留年したら継続"/>
+    <label style="font-size:13px;display:flex;align-items:center;gap:6px;margin:10px 0">
+      <input id="em-handover" type="checkbox" ${current.handoverNeeded?"checked":""} style="width:auto"/> 引き継ぎ対応が必要
+    </label>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">前月稼働時間（h）｜通常はNotionと連携して自動更新</label>
     <input id="em-workload" type="number" min="0" step="0.5" value="${current.lastMonthHours!=null?current.lastMonthHours:""}" placeholder="例：45"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">経験</label>
@@ -2847,6 +2886,8 @@ function saveMemberEdit(oldName) {
   const contractStartDate = document.getElementById("em-contract-start").value || "";
   const availableUntil = (document.getElementById("em-until").value||"").trim();
   const availableUntilNote = (document.getElementById("em-until-note").value||"").trim();
+  const tenureIntent = document.getElementById("em-intent").value;
+  const handoverNeeded = document.getElementById("em-handover").checked;
   const workloadRaw = document.getElementById("em-workload").value;
   const lastMonthHours = workloadRaw === "" ? null : Number(workloadRaw);
   const experience = (document.getElementById("em-experience").value||"").trim();
@@ -2887,10 +2928,10 @@ function saveMemberEdit(oldName) {
   const outsourcingSigned = (state.memberOverrides[newName] || {}).outsourcingSigned;
   const isBS = (state.memberOverrides[newName] || {}).isBS;
   const skillCategories = (state.memberOverrides[newName] || {}).skillCategories;
-  if (!univ && !area && !status && !contractStartDate && !availableUntil && !availableUntilNote && lastMonthHours == null && !experience && !skills && !canDo && !wantToDo && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories) {
+  if (!univ && !area && !status && !contractStartDate && !availableUntil && !availableUntilNote && !tenureIntent && !handoverNeeded && lastMonthHours == null && !experience && !skills && !canDo && !wantToDo && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories) {
     delete state.memberOverrides[newName];
   } else {
-    state.memberOverrides[newName] = { university: univ, area: area, status, contractStartDate, availableUntil, availableUntilNote, lastMonthHours, experience, skills, canDo, wantToDo, ndaSigned, outsourcingSigned, isBS, skillCategories };
+    state.memberOverrides[newName] = { university: univ, area: area, status, contractStartDate, availableUntil, availableUntilNote, tenureIntent, handoverNeeded, lastMonthHours, experience, skills, canDo, wantToDo, ndaSigned, outsourcingSigned, isBS, skillCategories };
   }
   save(); closeModal(); render();
 }
