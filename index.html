@@ -731,11 +731,22 @@ function setStatus(text, color) {
 }
 
 let writeTimer = null;
+// クラウド側の初回読み込みが終わるまでは true にしない。
+// これが false のまま push すると、localStorage が空の端末が INITIAL シードで
+// 本番データを上書きしてしまう（オフライン・初回アクセス・fetch失敗など）。
+let cloudLoaded = false;
 function pushToSupabase() {
   // member（閲覧モード）は絶対にクラウドDBへ書き込まない（読み取り専用）。
   // core は募集ステータスの上書きだけ許可されており（CORE_FNS 以外は disableFns で無効化済み）、
   // その保存がクラウドに届かないと同期時に消えてしまうため、admin 限定にはしない。
   if (!roleAtLeast("core")) return;
+  // クラウド読み込み完了前の保存は、ローカルの古い/初期状態で本番データを
+  // 上書きしてしまう危険があるため拒否する（初回シード投入は applyRemote/fetch側で
+  // cloudLoaded を先に true にしてから pushToSupabase を呼ぶので通る）。
+  if (!cloudLoaded) {
+    setStatus("⚠️ まだ読み込めていないため保存できません（再読み込みしてください）", "#b73a4a");
+    return;
+  }
   setStatus("⏳ 同期中…");
   clearTimeout(writeTimer);
   writeTimer = setTimeout(() => {
@@ -792,6 +803,7 @@ function save() {
 // Supabase リアルタイム購読：他端末・他ユーザーの変更を即反映
 function applyRemote(remote) {
   if (!remote) return;
+  cloudLoaded = true; // クラウドの値を受け取れたので、以降の push を許可する
   if (JSON.stringify(remote) === JSON.stringify(state)) {
     setStatus("✅ 同期済み", "#2f7d4a");
     return;
@@ -806,11 +818,14 @@ function applyRemote(remote) {
 sb.from("org_state").select("data").eq("id", ROW_ID).maybeSingle()
   .then(({ data: row, error }) => {
     if (error) {
-      setStatus("❌ 接続エラー: " + error.message, "#b73a4a");
+      // 読み込みが終わっていないので cloudLoaded は false のまま
+      // （= それまでの編集は pushToSupabase で保存されず、上書き事故を防ぐ）
+      setStatus("❌ 接続エラー（読み込み前のため編集は保存されません）: " + error.message, "#b73a4a");
       return;
     }
     if (!row) {
-      // 初回：現在のローカル state をクラウドにアップロード
+      // 初回：現在のローカル state をクラウドにアップロード（これは意図的な初回シードなので許可する）
+      cloudLoaded = true;
       pushToSupabase();
       return;
     }
@@ -838,7 +853,19 @@ function resetData() {
   );
 }
 function exportJSON() {
-  const blob = new Blob([JSON.stringify(state, null, 2)], {type:"application/json"});
+  // member は応募者の氏名・メアドを閲覧できないロールなので、エクスポートJSONにも含めない。
+  // state 自体は書き換えず、ディープコピー上でだけ該当フィールドを削除する。
+  let data = state;
+  if (!roleAtLeast("core")) {
+    data = JSON.parse(JSON.stringify(state));
+    ((data.recruitment && data.recruitment.rows) || []).forEach(row => {
+      delete row.studentNames;
+      delete row.studentEmails;
+      delete row.owner;
+      delete row.note;
+    });
+  }
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "rvss-org-" + new Date().toISOString().slice(0,10) + ".json";
@@ -1320,14 +1347,21 @@ function setRecruitOverrideField(key, field, value) {
   if (!state.recruitOverrides) state.recruitOverrides = {};
   const cur = state.recruitOverrides[key] || {};
   state.recruitOverrides[key] = { ...cur, [field]: value, updatedAt: new Date().toISOString() };
+  // render() でカードが並び替わるとページが一番上に飛ぶことがあるので、
+  // スクロール位置を保存して復元する
+  const y = window.scrollY;
   save(); render();
+  window.scrollTo(0, y);
 }
 function setRecruitStatus(key, value) { setRecruitOverrideField(key, "recruitStatus", value); }
 function setRecruitWebTest(key, value) { setRecruitOverrideField(key, "webTestStatus", value); }
 function clearRecruitOverride(key) {
   if (!key || !state.recruitOverrides) return;
   delete state.recruitOverrides[key];
+  // こちらも同様に、再描画によるスクロール位置ジャンプを防ぐ
+  const y = window.scrollY;
   save(); render();
+  window.scrollTo(0, y);
 }
 
 // 実際に学生を探している状態（枠が空いていても未募集なら「募集中」とは出さない）
@@ -1518,8 +1552,11 @@ function renderRecruitCardProgress(e) {
     : `<span class="count-pill" ${open > 0 ? 'style="background:var(--orange);color:var(--orange-text)"' : ""}>${filled}/${cap}名${open > 0 ? `・空き${open}` : ""}</span>`;
 
   const idx = recruitStepIndex(status);
+  // idx < 0（未募集・辞退）の場合、ステータスは下の info-row 側で必ず表示されるので、
+  // ここで重複してドロップダウンを出さない（同じカードに2つ出ると片方を変えても
+  // もう片方が再描画まで古い値のまま残ってしまう）
   const body = idx < 0
-    ? `<div style="margin:12px 0">${recruitStatusControlHTML(e)}</div>`
+    ? ""
     : `<div class="track">${RECRUIT_STEPS.map((s, i) => `
         <div class="step ${i <= idx ? "done" : ""} ${i === idx ? "current" : ""}">
           <div class="bar"></div><div class="lbl">${s}</div>
