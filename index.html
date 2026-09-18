@@ -622,6 +622,37 @@ function univTagHTML(univ) {
   return `<span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">${escapeHtml(univ)}</span>`;
 }
 
+// ====== 在籍予定（卒業・離脱の見込み） ======
+// memberOverrides[name].availableUntil に "YYYY-MM" で持ち、残り月数は都度計算する。
+// 期限そのものを保存しておけば、月をまたいでも表示が自動で追随する。
+const GRADUATION_SOON_MONTHS = 6;
+function parseYM(ym) {
+  const m = /^(\d{4})-(\d{1,2})$/.exec(String(ym || "").trim());
+  if (!m) return null;
+  const mo = Number(m[2]);
+  return mo >= 1 && mo <= 12 ? { y: Number(m[1]), m: mo } : null;
+}
+function monthsUntilYM(ym) {
+  const p = parseYM(ym);
+  if (!p) return null;
+  const now = new Date();
+  return (p.y - now.getFullYear()) * 12 + (p.m - (now.getMonth() + 1));
+}
+// 誰がいつ抜けるかは全員に見せる情報ではないので、core 以上でのみHTMLを組み立てる
+// （CSSで隠すとDOMには残ってしまうため）。
+function availableUntilHTML(mi) {
+  if (!roleAtLeast("core")) return "";
+  const p = parseYM(mi && mi.availableUntil);
+  if (!p) return "";
+  const left = monthsUntilYM(mi.availableUntil);
+  const leftLabel = left < 0 ? "期限超過" : left === 0 ? "今月まで" : `残り${left}ヶ月`;
+  const style = left <= GRADUATION_SOON_MONTHS
+    ? "background:var(--orange);color:var(--orange-text)"
+    : "background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc";
+  const note = ((mi && mi.availableUntilNote) || "").trim();
+  return `<span class="tag" style="${style}"${note ? ` title="${escapeHtml(note)}"` : ""}>在籍 ${p.y}年${p.m}月まで・${leftLabel}${note ? " ※" : ""}</span>`;
+}
+
 let allFilterSearch = "";
 let allFilterArea = "";
 function onAllSearchInput(v) {
@@ -655,6 +686,14 @@ function onAllSkillChange(v) {
 let allFilterContract = "";
 function onAllContractChange(v) {
   allFilterContract = (allFilterContract === v) ? "" : v;
+  const el = document.getElementById("content");
+  if (el) el.innerHTML = renderAll();
+}
+
+// 全メンバータブの在籍予定フィルター（core 以上のみ。"" = すべて）
+let allFilterTenure = "";
+function onAllTenureChange(v) {
+  allFilterTenure = (allFilterTenure === v) ? "" : v;
   const el = document.getElementById("content");
   if (el) el.innerHTML = renderAll();
 }
@@ -1977,6 +2016,19 @@ function renderAll() {
     return `<span class="tag" style="${style}" onclick="onAllContractChange('${f.id}')">${f.label} ${count}</span>`;
   }).join(" ");
 
+  // 在籍予定フィルター（core 以上のみ。引き継ぎ計画で「もうすぐ抜ける人」を拾うため）
+  const TENURE_FILTERS = [
+    { id: "soon", label: `${GRADUATION_SOON_MONTHS}ヶ月以内に卒業`, test: mi => { const l = monthsUntilYM(mi.availableUntil); return l !== null && l <= GRADUATION_SOON_MONTHS; } },
+    { id: "within1y", label: "1年以内に卒業", test: mi => { const l = monthsUntilYM(mi.availableUntil); return l !== null && l <= 12; } },
+    { id: "unset", label: "在籍予定 未設定", test: mi => monthsUntilYM(mi.availableUntil) === null },
+  ];
+  const tenureSummary = !roleAtLeast("core") ? "" : TENURE_FILTERS.map(f => {
+    const active = allFilterTenure === f.id;
+    const count = Object.keys(map).filter(n => !isBSMember(n) && f.test(memberInfo(n) || {})).length;
+    const style = `background:${active?'#2a2a2a':'#fff'};color:${active?'#fff':'#6b6b6b'};border:1px solid ${active?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${active?'font-weight:700':''}`;
+    return `<span class="tag" style="${style}" onclick="onAllTenureChange('${f.id}')">${f.label} ${count}</span>`;
+  }).join(" ");
+
   const filtered = Object.entries(map)
     .filter(([n]) => {
       if (!q) return true;
@@ -1995,6 +2047,12 @@ function renderAll() {
       if (!allFilterContract) return true;
       if (isBSMember(n)) return false;
       const f = CONTRACT_FILTERS.find(f => f.id === allFilterContract);
+      return !f || f.test(memberInfo(n) || {});
+    })
+    .filter(([n]) => {
+      if (!allFilterTenure || !roleAtLeast("core")) return true;
+      if (isBSMember(n)) return false;
+      const f = TENURE_FILTERS.find(f => f.id === allFilterTenure);
       return !f || f.test(memberInfo(n) || {});
     })
     // 有償枠を常に上部に。エリアで絞り込んだときも同じ並びになる
@@ -2041,7 +2099,8 @@ function renderAll() {
   ` : "";
 
   const contractFilterDef = CONTRACT_FILTERS.find(f => f.id === allFilterContract);
-  const filterNote = [allFilterArea, assignDef && assignDef.label, allFilterSkill, contractFilterDef && contractFilterDef.label].filter(Boolean).join(" / ");
+  const tenureFilterDef = roleAtLeast("core") ? TENURE_FILTERS.find(f => f.id === allFilterTenure) : null;
+  const filterNote = [allFilterArea, assignDef && assignDef.label, allFilterSkill, contractFilterDef && contractFilterDef.label, tenureFilterDef && tenureFilterDef.label].filter(Boolean).join(" / ");
   const titleText = filterNote
     ? `全メンバー（${regularFiltered.length} / 総${totalRegular}名） — ${filterNote}`
     : `全メンバー（${totalRegular}名）`;
@@ -2059,10 +2118,14 @@ function renderAll() {
         <span style="font-size:12px;color:var(--muted);margin-right:6px">スキル:</span>${skillSummary}
         ${allFilterSkill ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllSkillChange('${allFilterSkill}')">絞り込みを解除</span>` : ""}
       </div>
-      <div style="margin-bottom:0;line-height:2">
+      <div style="margin-bottom:${tenureSummary ? "10px" : "0"};line-height:2">
         <span style="font-size:12px;color:var(--muted);margin-right:6px">契約状況:</span>${contractSummary}
         ${allFilterContract ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllContractChange('${allFilterContract}')">絞り込みを解除</span>` : ""}
       </div>
+      ${tenureSummary ? `<div style="margin-bottom:0;line-height:2">
+        <span style="font-size:12px;color:var(--muted);margin-right:6px">在籍予定:</span>${tenureSummary}
+        ${allFilterTenure ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllTenureChange('${allFilterTenure}')">絞り込みを解除</span>` : ""}
+      </div>` : ""}
     </div>
     ${cards || '<div class="warn">該当メンバーがいません</div>'}
     ${bsSection}
@@ -2092,6 +2155,7 @@ function renderMemberCard(n, info) {
       <div style="line-height:1.8;margin-bottom:12px">
         ${mi.university ? univTagHTML(mi.university) : ""}
         ${mi.area ? areaTagHTML(mi.area) : ""}
+        ${availableUntilHTML(mi)}
         ${info.pjs.map(p=>`<span class="tag pj">${escapeHtml(p)}</span>`).join(" ")}
         ${info.depts.map(d=>`<span class="tag">${escapeHtml(d)}</span>`).join(" ")}
         ${(info.schools||[]).map(s=>`<span class="tag" style="background:var(--purple);color:var(--purple-text)">スクール:${escapeHtml(s)}</span>`).join(" ")}
@@ -2512,6 +2576,10 @@ function editMember(name) {
     </datalist>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">契約開始日（1年ごとに自動更新）</label>
     <input id="em-contract-start" type="date" value="${escapeHtml(current.contractStartDate||"")}"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">在籍予定（いつまで在籍するか。年月で入力）</label>
+    <input id="em-until" value="${escapeHtml(current.availableUntil||"")}" placeholder="例：2027-03"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">在籍予定の備考</label>
+    <input id="em-until-note" value="${escapeHtml(current.availableUntilNote||"")}" placeholder="例：就活次第で早まる可能性あり"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">前月稼働時間（h）｜通常はNotionと連携して自動更新</label>
     <input id="em-workload" type="number" min="0" step="0.5" value="${current.lastMonthHours!=null?current.lastMonthHours:""}" placeholder="例：45"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">経験</label>
@@ -2534,6 +2602,8 @@ function saveMemberEdit(oldName) {
   const newName = (document.getElementById("em-name").value||"").trim() || oldName;
   const status = (document.getElementById("em-status").value||"").trim();
   const contractStartDate = document.getElementById("em-contract-start").value || "";
+  const availableUntil = (document.getElementById("em-until").value||"").trim();
+  const availableUntilNote = (document.getElementById("em-until-note").value||"").trim();
   const workloadRaw = document.getElementById("em-workload").value;
   const lastMonthHours = workloadRaw === "" ? null : Number(workloadRaw);
   const experience = (document.getElementById("em-experience").value||"").trim();
@@ -2574,10 +2644,10 @@ function saveMemberEdit(oldName) {
   const outsourcingSigned = (state.memberOverrides[newName] || {}).outsourcingSigned;
   const isBS = (state.memberOverrides[newName] || {}).isBS;
   const skillCategories = (state.memberOverrides[newName] || {}).skillCategories;
-  if (!univ && !area && !status && !contractStartDate && lastMonthHours == null && !experience && !skills && !canDo && !wantToDo && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories) {
+  if (!univ && !area && !status && !contractStartDate && !availableUntil && !availableUntilNote && lastMonthHours == null && !experience && !skills && !canDo && !wantToDo && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories) {
     delete state.memberOverrides[newName];
   } else {
-    state.memberOverrides[newName] = { university: univ, area: area, status, contractStartDate, lastMonthHours, experience, skills, canDo, wantToDo, ndaSigned, outsourcingSigned, isBS, skillCategories };
+    state.memberOverrides[newName] = { university: univ, area: area, status, contractStartDate, availableUntil, availableUntilNote, lastMonthHours, experience, skills, canDo, wantToDo, ndaSigned, outsourcingSigned, isBS, skillCategories };
   }
   save(); closeModal(); render();
 }
