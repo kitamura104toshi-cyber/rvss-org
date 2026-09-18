@@ -176,6 +176,7 @@
 
   /* ===== 閲覧モード ===== */
   body.view-mode .editor-only { display: none !important; }
+  body:not(.core-mode) .core-only { display: none !important; }
   body.view-mode .tag.editable { cursor: default; pointer-events: none; }
   body.view-mode .tag.editable:hover { outline: none; }
   body.view-mode .card-title[onclick],
@@ -665,14 +666,29 @@ const SUPABASE_ANON_KEY = IS_LOCAL_DEV ? DEV_SUPABASE_ANON_KEY : PROD_SUPABASE_A
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const ROW_ID = "main";
 
-// ====== 編集モード判定（URLパラメータで切り替え） ======
-// 共有URL: https://rvss-org.vercel.app/           → 閲覧モード（誰でも）
-// 編集URL: https://rvss-org.vercel.app/?key=<KEY> → 編集モード（オーナーのみ）
-const EDIT_KEY = "kitamura-rvss-admin-2026";  // ← 必要なら書き換えて再デプロイ
-const isEditMode = new URLSearchParams(location.search).get("key") === EDIT_KEY;
+// ====== ロール判定（URLパラメータで切り替え） ======
+// 共有URL: /                     → member（2タブ・編集不可）
+// コアメン: /?key=rvss-core-2026 → core（6タブ・募集の進捗ステータスだけ編集可）
+// 管理者:   /?key=<ADMIN_KEY>    → admin（全タブ・全編集可）
+// キーは index.html に含まれるので機密性の保証ではない。あくまでUI上の出し分けとして扱う。
+const ROLE_KEYS = {
+  admin: "kitamura-rvss-admin-2026",
+  core:  "rvss-core-2026",
+};
+const ROLE_RANK = { member: 0, core: 1, admin: 2 };
+function resolveRole(key) {
+  if (key === ROLE_KEYS.admin) return "admin";
+  if (key === ROLE_KEYS.core) return "core";
+  return "member";
+}
+const ROLE = resolveRole(new URLSearchParams(location.search).get("key"));
+function roleAtLeast(r) { return ROLE_RANK[ROLE] >= ROLE_RANK[r]; }
+// 既存コードは isEditMode を参照し続けるので、admin のエイリアスとして残す
+const isEditMode = ROLE === "admin";
 
 function applyMode() {
   document.body.classList.toggle("view-mode", !isEditMode);
+  document.body.classList.toggle("core-mode", roleAtLeast("core"));
   updateModeBadge();
 }
 function updateModeBadge() {
@@ -685,9 +701,14 @@ function updateModeBadge() {
     badge.className = "mode-badge";
     h1.appendChild(badge);
   }
-  if (isEditMode) {
-    badge.textContent = "編集モード";
+  if (ROLE === "admin") {
+    badge.textContent = "管理者モード";
     badge.className = "mode-badge edit";
+    badge.style.display = "";
+  } else if (ROLE === "core") {
+    badge.textContent = "コアメンバー";
+    badge.className = "mode-badge view";
+    badge.style.display = "";
   } else {
     badge.style.display = "none";
   }
@@ -859,17 +880,21 @@ async function syncRecruitment() {
 }
 
 // ====== タブ ======
-let currentTab = "projects";
+// 上位ロールは下位ロールのタブをすべて含む（積み上げ式）
 const BASE_TABS = [
-  { id: "projects", label: "プロジェクト" },
-  { id: "recruit", label: "プロジェクト募集状況" },
-  { id: "community", label: "コミュニティ運営" },
-  { id: "schools", label: "スクール受講者" },
-  { id: "paid", label: "有償枠" },
-  { id: "all", label: "全メンバー" },
+  { id: "all",       label: "全メンバー",           minRole: "member" },
+  { id: "recruit",   label: "プロジェクト募集状況", minRole: "member" },
+  { id: "projects",  label: "プロジェクト",         minRole: "core" },
+  { id: "community", label: "コミュニティ運営",     minRole: "core" },
+  { id: "schools",   label: "スクール受講者",       minRole: "core" },
+  { id: "paid",      label: "有償枠",               minRole: "core" },
 ];
+// core 以上は今までどおりプロジェクトタブから始める。member は先頭の全メンバー。
+let currentTab = roleAtLeast("core") ? "projects" : "all";
 function getTabs() {
-  return BASE_TABS.concat(state.customTabs.map(t => ({ id: t.id, label: t.label, custom: true })));
+  const base = BASE_TABS.filter(t => roleAtLeast(t.minRole));
+  if (!roleAtLeast("core")) return base;
+  return base.concat(state.customTabs.map(t => ({ id: t.id, label: t.label, custom: true, minRole: "core" })));
 }
 
 // ====== 集計 ======
@@ -965,7 +990,11 @@ function renderTabs() {
   document.getElementById("tabs").innerHTML = tabsHtml +
     `<button class="tab-add editor-only" onclick="addCustomTab()">+ タブを追加</button>`;
 }
-function setTab(id) { currentTab = id; render(); }
+function setTab(id) {
+  const tabs = getTabs();
+  currentTab = tabs.some(t => t.id === id) ? id : ((tabs[0] || {}).id || "all");
+  render();
+}
 
 function addCustomTab() {
   inputDialog("新しいタブ名", "", (name) => {
