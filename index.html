@@ -186,6 +186,17 @@
     border: none; border-radius: 999px; padding: 4px 10px;
     font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
   }
+  .pay-table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+  .pay-table th {
+    text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;
+    padding: 6px 10px; border-bottom: 1px solid var(--border);
+  }
+  .pay-table td { padding: 7px 10px; border-bottom: 1px solid #f0eee7; }
+  .pay-row { cursor: pointer; }
+  .pay-row:hover { background: #faf9f5; }
+  .pay-detail td { background: #faf9f5; padding: 10px 24px; }
+  .pay-line { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; max-width: 420px; }
+  .pay-line.total { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 6px; font-weight: 700; }
   .recruit-detail { margin-top: 8px; }
   .recruit-detail-v {
     font-size: 12px; line-height: 1.7; white-space: pre-wrap;
@@ -821,6 +832,10 @@ function ensureFields(s) {
   // アプリ側で上書きした募集ステータス。同期（sheets-recruitment-sync）はこの層に触らないので、
   // 5時間ごとの取り込みでアプリの編集が消えることはない。
   if (!s.recruitOverrides) s.recruitOverrides = {};
+  // 報酬計算用の入力値（360°評価・出席率・リファ・スクール・マネージャー・手動調整）。
+  // 稼働時間だけは memberOverrides.lastMonthHours（Notion連携）を使うのでここには持たない。
+  if (!s.compensation) s.compensation = { members: {} };
+  if (!s.compensation.members) s.compensation.members = {};
   (s.projects || []).forEach(p => {
     p.mentors = normalizeMemberList(p.mentors);
     p.students = normalizeMemberList(p.students);
@@ -968,6 +983,7 @@ const BASE_TABS = [
   { id: "community", label: "コミュニティ運営",     minRole: "core" },
   { id: "schools",   label: "スクール受講者",       minRole: "core" },
   { id: "paid",      label: "有償枠",               minRole: "core" },
+  { id: "pay",       label: "報酬",                 minRole: "admin" },
 ];
 // core 以上は今までどおりプロジェクトタブから始める。member は先頭の全メンバー。
 let currentTab = roleAtLeast("core") ? "projects" : "all";
@@ -1115,6 +1131,8 @@ function renderContent() {
     el.innerHTML = `<div class="grid">${state.schools.map(renderSchool).join("")}</div>`;
     } else if (currentTab === "paid") {
     el.innerHTML = renderPaid();
+  } else if (currentTab === "pay") {
+    el.innerHTML = renderCompensation();
   } else if (currentTab === "all") {
     tb.innerHTML = `
       <input class="search" id="search" placeholder="メンバー検索（名前・経験・スキル・できること・やりたいこと）…" value="${escapeHtml(allFilterSearch)}" oninput="onAllSearchInput(this.value)" style="min-width:260px"/>
@@ -1255,6 +1273,231 @@ function addPaidMember(gi) {
 function removePaidMember(gi, mi) {
   state.paidGroups[gi].members.splice(mi, 1);
   save(); render();
+}
+
+// ====== 報酬計算（管理者のみ） ======
+// 2026年8月の実績一覧（48名）で検算し、西原さんの個別調整1件を除いて全員一致することを確認済み。
+// 条件が変わったらこの定数だけを直せばよい。設定画面はまだ作らない。
+const PAY_RULES = {
+  base: 80000,
+  minPayableHours: 40,            // これ未満は他の加算があっても支払なし
+  hoursPenalties: [               // 上から順に判定し、最初に当てはまった額を使う
+    { min: 60, amount: 0 },
+    { min: 50, amount: -10000 },
+    { min: 40, amount: -20000 },
+  ],
+  attendanceMin: 90,              // %。未満（未入力を含む）で減額
+  attendancePenalty: -5000,
+  scoreBands: [                   // 360°評価。上から順に判定
+    { min: 3.5, amount: 75000 },
+    { min: 3.0, amount: 25000 },
+    { min: 2.5, amount: 5000 },
+  ],
+  schoolBonus: 5000,
+  managerPay: 30000,
+  // マネージャー認定は人が決める（条件が変わる運用のため自動判定にしない）。
+  // 下記は「候補です」と表示するためだけの目安。
+  managerHint: { minScore: 3.5, minHours: 60, requiresReferral: true },
+};
+
+function yen(n) {
+  return (n < 0 ? "-" : "") + "¥" + Math.abs(Math.round(n)).toLocaleString("ja-JP");
+}
+function payInfoOf(name) {
+  const m = ((state.compensation || {}).members) || {};
+  for (const k of [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")]) if (m[k]) return m[k];
+  return {};
+}
+// 「先月分」を対象にする。稼働時間（lastMonthHours）が先月のものなので表示もそれに揃える。
+function payMonthLabel() {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}年${d.getMonth() + 1}月`;
+}
+
+// 最終金額を内訳付きで返す。内訳の合計がそのまま支給額になるようにしてある。
+function computePay(name) {
+  const mi = memberInfo(name) || {};
+  const pi = payInfoOf(name);
+  const hours = typeof mi.lastMonthHours === "number" ? mi.lastMonthHours : null;
+  const lines = [];
+  if (hours === null) return { payable: false, reason: "稼働時間が未取得", hours, lines, total: 0 };
+  if (hours < PAY_RULES.minPayableHours) {
+    return { payable: false, reason: `稼働${PAY_RULES.minPayableHours}時間未満（${hours}h）`, hours, lines, total: 0 };
+  }
+  lines.push({ label: "基本給", amount: PAY_RULES.base });
+
+  const hp = PAY_RULES.hoursPenalties.find(p => hours >= p.min);
+  if (hp && hp.amount) lines.push({ label: `稼働時間ペナルティ（${hours}h）`, amount: hp.amount });
+
+  const att = typeof pi.attendanceRate === "number" ? pi.attendanceRate : null;
+  if (att === null) lines.push({ label: "出席率ペナルティ（未入力）", amount: PAY_RULES.attendancePenalty });
+  else if (att < PAY_RULES.attendanceMin) lines.push({ label: `出席率ペナルティ（${att}%）`, amount: PAY_RULES.attendancePenalty });
+
+  const score = typeof pi.score360 === "number" ? pi.score360 : null;
+  if (score !== null) {
+    const band = PAY_RULES.scoreBands.find(b => score >= b.min);
+    if (band) lines.push({ label: `360°評価加算（${score.toFixed(2)}）`, amount: band.amount });
+  }
+  if (pi.school) lines.push({ label: "スクール受講加算", amount: PAY_RULES.schoolBonus });
+  if (pi.isManager) lines.push({ label: "マネージャー報酬", amount: PAY_RULES.managerPay });
+  if (pi.adjust) lines.push({ label: "手動調整" + (pi.adjustNote ? `（${pi.adjustNote}）` : ""), amount: pi.adjust });
+
+  return { payable: true, hours, lines, total: lines.reduce((s, l) => s + l.amount, 0) };
+}
+
+// 認定の判断材料。条件を満たしていても自動では付けない。
+function managerEligible(name) {
+  const pi = payInfoOf(name);
+  const mi = memberInfo(name) || {};
+  const h = PAY_RULES.managerHint;
+  return typeof pi.score360 === "number" && pi.score360 >= h.minScore
+    && (!h.requiresReferral || !!pi.referral)
+    && typeof mi.lastMonthHours === "number" && mi.lastMonthHours >= h.minHours;
+}
+
+const openPayNames = new Set();
+function togglePayDetail(name) {
+  if (openPayNames.has(name)) openPayNames.delete(name);
+  else openPayNames.add(name);
+  const el = document.getElementById("content");
+  if (el) el.innerHTML = renderCompensation();
+}
+
+function renderCompensation() {
+  const map = buildMemberMap();
+  const rows = Object.keys(map)
+    .filter(n => !isBSMember(n))
+    .map(n => ({ name: n, calc: computePay(n), pi: payInfoOf(n) }))
+    .sort((a, b) => (b.calc.hours || 0) - (a.calc.hours || 0));
+  const payable = rows.filter(r => r.calc.payable);
+  const unpayable = rows.filter(r => !r.calc.payable);
+  const total = payable.reduce((s, r) => s + r.calc.total, 0);
+  const missingAttendance = payable.filter(r => typeof r.pi.attendanceRate !== "number").length;
+  const missingScore = payable.filter(r => typeof r.pi.score360 !== "number").length;
+
+  const cell = v => `<td>${v}</td>`;
+  const row = r => {
+    const pi = r.pi;
+    const open = openPayNames.has(r.name);
+    const hint = !pi.isManager && managerEligible(r.name)
+      ? ` <span class="tag" style="background:var(--blue);color:var(--blue-text);font-size:10px">認定候補</span>` : "";
+    const detail = open ? `
+      <tr class="pay-detail"><td colspan="9">
+        ${r.calc.lines.map(l => `<div class="pay-line"><span>${escapeHtml(l.label)}</span><span>${yen(l.amount)}</span></div>`).join("")}
+        <div class="pay-line total"><span>合計</span><span>${yen(r.calc.total)}</span></div>
+      </td></tr>` : "";
+    return `
+      <tr class="pay-row" onclick="togglePayDetail(${jsArg(r.name)})">
+        ${cell(`${open ? "▲" : "▼"} ${escapeHtml(r.name)}${hint}`)}
+        ${cell(r.calc.hours != null ? r.calc.hours + "h" : "—")}
+        ${cell(typeof pi.attendanceRate === "number" ? pi.attendanceRate + "%" : '<span style="color:var(--pink-text)">未入力</span>')}
+        ${cell(typeof pi.score360 === "number" ? pi.score360.toFixed(2) : "—")}
+        ${cell(pi.referral ? "有" : "")}
+        ${cell(pi.school ? "○" : "")}
+        ${cell(pi.isManager ? "○" : "")}
+        ${cell(pi.adjust ? yen(pi.adjust) : "")}
+        <td style="text-align:right;font-weight:700">${yen(r.calc.total)}
+          <button class="btn editor-only" onclick="event.stopPropagation();editPayMember(${jsArg(r.name)})" style="font-size:10px;padding:2px 8px;margin-left:8px">編集</button>
+        </td>
+      </tr>${detail}`;
+  };
+
+  const unpaidRow = r => `
+    <tr class="pay-row" style="color:var(--muted)">
+      ${cell(escapeHtml(r.name))}
+      ${cell(r.calc.hours != null ? r.calc.hours + "h" : "—")}
+      <td colspan="6">${escapeHtml(r.calc.reason)}</td>
+      <td style="text-align:right">${yen(0)}
+        <button class="btn editor-only" onclick="editPayMember(${jsArg(r.name)})" style="font-size:10px;padding:2px 8px;margin-left:8px">編集</button>
+      </td>
+    </tr>`;
+
+  const warn = [];
+  if (missingScore) warn.push(`360°評価が未入力 ${missingScore}名`);
+  if (missingAttendance) warn.push(`出席率が未入力 ${missingAttendance}名（各 ${yen(PAY_RULES.attendancePenalty)} として計算しています）`);
+
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head">
+        <div class="card-title">${payMonthLabel()}分の報酬</div>
+        <div style="font-size:20px;font-weight:700">${yen(total)}</div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
+        支給対象 ${payable.length}名 ／ 対象外 ${unpayable.length}名
+      </div>
+      ${warn.length ? `<div class="warn" style="margin-bottom:8px">${warn.map(escapeHtml).join("／")}</div>` : ""}
+      <div style="font-size:11px;color:var(--muted);line-height:1.8">
+        基本給 ${yen(PAY_RULES.base)}／稼働 60h以上±0・50h台 ${yen(-10000)}・40h台 ${yen(-20000)}・40h未満は支給なし／
+        出席率 ${PAY_RULES.attendanceMin}%未満 ${yen(PAY_RULES.attendancePenalty)}／
+        360°評価 3.5以上 ${yen(75000)}・3.0以上 ${yen(25000)}・2.5以上 ${yen(5000)}／
+        スクール受講 ${yen(PAY_RULES.schoolBonus)}／マネージャー ${yen(PAY_RULES.managerPay)}
+      </div>
+    </div>
+    <div class="card">
+      <div style="overflow-x:auto">
+        <table class="pay-table">
+          <thead><tr>
+            <th>氏名</th><th>稼働</th><th>出席率</th><th>360°</th><th>リファ</th><th>スクール</th><th>Mgr</th><th>調整</th><th style="text-align:right">最終金額</th>
+          </tr></thead>
+          <tbody>${payable.map(row).join("")}</tbody>
+        </table>
+      </div>
+      ${unpayable.length ? `
+        <div style="margin-top:20px;padding-top:12px;border-top:1px dashed var(--border)">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">支給対象外（${unpayable.length}名）</div>
+          <div style="overflow-x:auto"><table class="pay-table"><tbody>${unpayable.map(unpaidRow).join("")}</tbody></table></div>
+        </div>` : ""}
+    </div>
+  `;
+}
+
+function editPayMember(name) {
+  const pi = payInfoOf(name);
+  openModal(`
+    <h3>${escapeHtml(name)} の報酬入力</h3>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">360°評価（四半期ごとに更新。未実施なら空欄）</label>
+    <input id="pay-score" type="number" min="0" max="5" step="0.01" value="${pi.score360 != null ? pi.score360 : ""}" placeholder="例：3.25"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">土曜定例の出席率（%）｜将来Zoom連携で自動化</label>
+    <input id="pay-att" type="number" min="0" max="100" step="0.1" value="${pi.attendanceRate != null ? pi.attendanceRate : ""}" placeholder="例：91.7"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">手動調整（円。マイナスも可）</label>
+    <input id="pay-adjust" type="number" step="1000" value="${pi.adjust != null ? pi.adjust : ""}" placeholder="例：15000"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">手動調整の理由</label>
+    <input id="pay-adjust-note" value="${escapeHtml(pi.adjustNote || "")}" placeholder="例：個別対応"/>
+    <label style="font-size:13px;display:flex;align-items:center;gap:6px;margin:10px 0">
+      <input id="pay-referral" type="checkbox" ${pi.referral ? "checked" : ""} style="width:auto"/> リファあり
+    </label>
+    <label style="font-size:13px;display:flex;align-items:center;gap:6px;margin:10px 0">
+      <input id="pay-school" type="checkbox" ${pi.school ? "checked" : ""} style="width:auto"/> スクール受講加算の対象
+    </label>
+    <label style="font-size:13px;display:flex;align-items:center;gap:6px;margin:10px 0">
+      <input id="pay-manager" type="checkbox" ${pi.isManager ? "checked" : ""} style="width:auto"/> マネージャー認定（${yen(PAY_RULES.managerPay)}／月）
+    </label>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">
+      ${managerEligible(name) ? "※ 認定条件（360°3.5以上・リファ有・稼働60h以上）を満たしています" : "※ 認定条件は満たしていません。認定するかは人が判断します"}
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="closeModal()">キャンセル</button>
+      <button class="btn primary" onclick="savePayMember(${jsArg(name)})">保存</button>
+    </div>
+  `);
+}
+function savePayMember(name) {
+  const num = id => { const v = document.getElementById(id).value; return v === "" ? null : Number(v); };
+  const entry = {
+    score360: num("pay-score"),
+    attendanceRate: num("pay-att"),
+    adjust: num("pay-adjust") || 0,
+    adjustNote: (document.getElementById("pay-adjust-note").value || "").trim(),
+    referral: document.getElementById("pay-referral").checked,
+    school: document.getElementById("pay-school").checked,
+    isManager: document.getElementById("pay-manager").checked,
+  };
+  if (!state.compensation) state.compensation = { members: {} };
+  if (!state.compensation.members) state.compensation.members = {};
+  state.compensation.members[name] = entry;
+  save(); closeModal(); render();
 }
 
 // ====== プロジェクト募集状況 ======
@@ -2670,6 +2913,7 @@ const ADMIN_FNS = [
   "addSubGroup","deleteSubGroup","renameSubGroup","addSubGroupMember","removeSubGroupMember",
   "addSchool","deleteSchool","setSchoolLead","addSchoolStudent","removeSchoolStudent",
   "addMember","editMember","saveMemberEdit","deleteMember","restoreMember",
+  "editPayMember","savePayMember",
   "editSlotMember","saveSlotMember","reorderItem",
   "toggleNdaSigned","toggleOutsourcingSigned",
   "addCustomTab","deleteCustomTab",
