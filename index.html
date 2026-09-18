@@ -2887,7 +2887,7 @@ function renderMemberCard(n, info) {
           ${(info.schools||[]).map(s=>`<span class="tag" style="background:var(--purple);color:var(--purple-text)">スクール:${escapeHtml(s)}</span>`).join(" ")}
         ` : ""}
       </div>
-      ${showAdmin ? contractRemainingHTML(mi.contractStartDate) : ""}
+      ${showAdmin ? contractRemainingHTML(mi) : ""}
       ${showAdmin ? workloadHTML(mi.lastMonthHours) : ""}
       ${profileField("趣味", mi.hobby)}
       ${profileField("経験", mi.experience)}
@@ -3265,12 +3265,21 @@ function contractRenewalInfo(contractStartDate) {
   const nextLabel = `${next.getFullYear()}/${next.getMonth()+1}/${next.getDate()}`;
   return { days, nextLabel };
 }
-function contractRemainingHTML(contractStartDate) {
-  const info = contractRenewalInfo(contractStartDate);
-  const value = info ? `残り${info.days}日（次回更新日: ${info.nextLabel}）` : "";
+// 残り活動期間。知りたいのは契約の更新日ではなく「いつまで在籍するか」なので、
+// 卒業タイミングのヒアリング結果を本文にし、契約の更新日は補足として下に添える。
+function contractRemainingHTML(mi) {
+  const m = mi || {};
+  const left = monthsUntilYM(m.availableUntil);
+  const phrase = tenurePhrase(m.tenureIntent || "", left, tenureDateLabel(m.availableUntil));
+  const note = (m.availableUntilNote || "").trim();
+  const info = contractRenewalInfo(m.contractStartDate);
+  const sub = info ? `契約更新 ${info.nextLabel}（残り${info.days}日）` : "";
   return `
-    <div class="section-label">残り契約期間</div>
-    <div style="font-size:13px;line-height:1.6;margin-bottom:10px;color:${value ? "var(--text)" : "var(--muted)"}">${value ? escapeHtml(value) : "未設定"}</div>
+    <div class="section-label">残り活動期間</div>
+    <div style="font-size:13px;line-height:1.6;color:${phrase ? "var(--text)" : "var(--muted)"}">${phrase ? escapeHtml(phrase) : "未確認"}</div>
+    ${note ? `<div style="font-size:12px;line-height:1.6;color:var(--muted)">${escapeHtml(note)}</div>` : ""}
+    ${m.handoverNeeded ? `<div style="font-size:12px;line-height:1.6;color:var(--orange-text)">引き継ぎ対応が必要</div>` : ""}
+    <div style="font-size:12px;line-height:1.6;margin-bottom:10px;color:var(--muted)">${sub ? escapeHtml(sub) : ""}</div>
   `;
 }
 // 前月稼働時間（Notionの稼働管理表と連携して自動反映される想定。手動編集も可）
