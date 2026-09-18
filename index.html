@@ -1742,8 +1742,9 @@ async function exportPayToSheets() {
       save();
     }
     render();
+    const tabs = (data.written || []).map(w => w.title).join("・");
     setStatus(
-      `✅ ${data.created ? "新しいブックを作成しました" : "上書きしました"}（${data.rows - 1}名）`,
+      `✅ ${data.created ? "新しいブックを作成しました" : "上書きしました"}（${tabs}）`,
       "#2f7d4a"
     );
   } catch (e) {
