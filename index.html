@@ -661,6 +661,23 @@ function tenureDateLabel(v) {
   if (!p) return "";
   return `${p.y}年${p.m}月${p.d ? p.d + "日" : ""}`;
 }
+// 残り活動期間の1行。意思と期日を別々のバッジにせず、読んで分かる文にする。
+function tenurePhrase(intent, left, date) {
+  if (left === null) {
+    if (intent === "卒業") return "卒業予定・時期未定";
+    if (intent === "継続") return "継続予定";
+    return "";
+  }
+  if (left < 0) {
+    return intent === "卒業" ? `卒業予定日（${date}）を過ぎています` : `${date}を過ぎています`;
+  }
+  if (left === 0) {
+    return intent === "卒業" ? `今月卒業（${date}）` : `今月まで（${date}）`;
+  }
+  if (intent === "卒業") return `卒業まであと${left}ヶ月（${date}）`;
+  if (intent === "継続") return `${date}まであと${left}ヶ月・継続予定`;
+  return `${date}まであと${left}ヶ月`;
+}
 // ====== リファラル ======
 // 採用シートの「紹介者」列を referredBy として取り込み、そこから
 // 「この人が紹介した人」を逆引きする。
@@ -714,18 +731,17 @@ function availableUntilHTML(mi) {
   if (!intent && left === null && !mi.handoverNeeded) return "";
 
   const tags = [];
-  if (intent) {
-    const s = intent === "卒業"
-      ? "background:var(--pink);color:var(--pink-text)"
-      : "background:var(--green);color:var(--green-text)";
-    tags.push(`<span class="tag" style="${s}">${escapeHtml(intent)}予定</span>`);
-  }
-  if (left !== null) {
-    const leftLabel = left < 0 ? "経過済み" : left === 0 ? "今月" : `あと${left}ヶ月`;
-    const s = left <= GRADUATION_SOON_MONTHS
+  // 「卒業予定」というステータスと日付を別々に出すのではなく、
+  // 「卒業まであと6ヶ月」と読める1本の文にする。あと何ヶ月かが知りたい情報のため。
+  const phrase = tenurePhrase(intent, left, tenureDateLabel(mi && mi.availableUntil));
+  if (phrase) {
+    const soon = left !== null && left <= GRADUATION_SOON_MONTHS;
+    const s = soon
       ? "background:var(--orange);color:var(--orange-text)"
+      : intent === "継続"
+      ? "background:var(--green);color:var(--green-text)"
       : "background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc";
-    tags.push(`<span class="tag" style="${s}"${note ? ` title="${escapeHtml(note)}"` : ""}>${tenureDateLabel(mi.availableUntil)}・${leftLabel}${note ? " ※" : ""}</span>`);
+    tags.push(`<span class="tag" style="${s}"${note ? ` title="${escapeHtml(note)}"` : ""}>${escapeHtml(phrase)}${note ? " ※" : ""}</span>`);
   } else if (note) {
     tags.push(`<span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc" title="${escapeHtml(note)}">残り活動期間 ※</span>`);
   }
