@@ -186,6 +186,11 @@
     border: none; border-radius: 999px; padding: 4px 10px;
     font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
   }
+  .recruit-detail { margin-top: 8px; }
+  .recruit-detail-v {
+    font-size: 12px; line-height: 1.7; white-space: pre-wrap;
+    margin-bottom: 10px; color: var(--text);
+  }
   .mode-badge {
     display: inline-block;
     font-size: 11px;
@@ -1395,6 +1400,67 @@ function recruitOverrideNoteHTML(e) {
   </div>`;
 }
 
+// 詳細は既定で閉じる。開いたカードだけ覚えておき、再描画しても開いたままにする。
+const openRecruitKeys = new Set();
+function toggleRecruitDetail(key) {
+  if (openRecruitKeys.has(key)) openRecruitKeys.delete(key);
+  else openRecruitKeys.add(key);
+  const el = document.getElementById("content");
+  if (el) el.innerHTML = renderRecruit();
+}
+
+// 応募している学生の名前。個人情報なので member では HTML を組み立てない。
+const APPLICANT_STATUSES = ["応募あり", "PJ連携中", "アサイン確定", "アサイン済み"];
+function recruitApplicantsHTML(e) {
+  if (!roleAtLeast("core")) return "";
+  const names = (e.row && e.row.studentNames) || [];
+  if (names.length === 0) return "";
+  if (!APPLICANT_STATUSES.includes(resolveRecruitStatus(e))) return "";
+  const known = buildMemberMap();
+  const chips = names.map(n => {
+    const key = String(n).replace(/[\s　]/g, "");
+    const hit = Object.keys(known).find(m => m.replace(/[\s　]/g, "") === key);
+    return hit
+      ? `<span class="tag name-link" style="background:var(--green);color:var(--green-text)" onclick="goToMemberCard(${jsArg(hit)})">${escapeHtml(n)}</span>`
+      : `<span class="tag" style="background:var(--green);color:var(--green-text)">${escapeHtml(n)}</span>`;
+  }).join(" ");
+  return `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">
+    <span style="font-size:11px;color:var(--muted);margin-right:2px">応募</span>${chips}
+  </div>`;
+}
+
+// 募集要項。member にも見せる項目と core 以上だけの項目を分ける。
+function recruitDetailHTML(e) {
+  const r = e.row;
+  if (!r) return "";
+  const open = openRecruitKeys.has(e.key);
+  const rows = [
+    ["稼働時間と期間", r.workload],
+    ["プロジェクト概要", r.summary],
+    ["担ってほしい役割", r.role],
+    ["求める人物像・スキル", r.wanted],
+    ["得られるスキル・経験", r.gains],
+    ["フィードバック形式", r.feedback],
+    ["メンター", r.mentor],
+  ];
+  if (roleAtLeast("core")) {
+    rows.push(["記入者", r.owner]);
+    rows.push(["連絡事項", r.note]);
+    rows.push(["応募者メアド", ((r.studentEmails || []).join("、"))]);
+  }
+  const filled = rows.filter(([, v]) => v);
+  if (filled.length === 0) return "";
+  const body = open
+    ? `<div class="recruit-detail">${filled.map(([k, v]) =>
+        `<div class="section-label">${escapeHtml(k)}</div>
+         <div class="recruit-detail-v">${escapeHtml(v)}</div>`).join("")}</div>`
+    : "";
+  return `<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border)">
+    <span style="font-size:12px;color:var(--accent);cursor:pointer" onclick="toggleRecruitDetail(${jsArg(e.key)})">${open ? "▲ 募集要項を閉じる" : "▼ 募集要項を見る"}</span>
+    ${body}
+  </div>`;
+}
+
 // 案3：空き枠を主役にしたカード（学生向け）
 function renderRecruitCardStudent(e) {
   const r = e.row;
@@ -1425,6 +1491,8 @@ function renderRecruitCardStudent(e) {
         ${recruitStatusControlHTML(e)}${webTest}
       </div>
       ${recruitOverrideNoteHTML(e)}
+      ${recruitApplicantsHTML(e)}
+      ${recruitDetailHTML(e)}
     </div>
   `;
 }
@@ -1473,6 +1541,8 @@ function renderRecruitCardProgress(e) {
         ${infoRow("Webテスト", recruitWebTestControlHTML(e))}
       </div>
       ${recruitOverrideNoteHTML(e)}
+      ${recruitApplicantsHTML(e)}
+      ${recruitDetailHTML(e)}
     </div>
   `;
 }
