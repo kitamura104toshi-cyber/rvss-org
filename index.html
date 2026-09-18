@@ -1568,11 +1568,14 @@ function renderCompensation() {
         360°評価 3.5以上 ${yen(75000)}・3.0以上 ${yen(25000)}・2.5以上 ${yen(5000)}／
         スクール受講 ${yen(PAY_RULES.schoolBonus)}／マネージャー ${yen(PAY_RULES.managerPay)}
       </div>
-      <div class="editor-only" style="font-size:11px;color:var(--muted);margin-top:8px">
-        書き出し先: ${payExportSheetId()
-          ? `<a href="https://docs.google.com/spreadsheets/d/${escapeHtml(payExportSheetId())}/edit" target="_blank" rel="noopener">スプレッドシート</a>`
+      <div class="editor-only" style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.9">
+        共有先: ${payExportShareTo()
+          ? escapeHtml(payExportShareTo())
           : "<span style='color:var(--pink-text)'>未設定</span>"}
-        <span style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="setPayExportSheet()">変更</span>
+        <span style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="setPayExportShareTo()">変更</span>
+        <br>${payMonthLabel()}分のブック: ${payExportSheetId()
+          ? `<a href="https://docs.google.com/spreadsheets/d/${escapeHtml(payExportSheetId())}/edit" target="_blank" rel="noopener">開く</a>（再実行すると上書き）`
+          : "未作成（「スプシで書き出す」で新規作成されます）"}
       </div>
     </div>
     ${block("プロジェクト関与", pjMembers, row)}
@@ -1590,17 +1593,24 @@ function renderCompensation() {
 // 書き出し先は管理者が用意した非公開スプレッドシートを登録して使う。
 // 計算はここ（クライアント側）で済ませて行データだけ送る。Edge Function 側に
 // 計算ルールを二重に持たせると、片方だけ直したときに静かに食い違うため。
-const PAY_EXPORT_SA = "sheets-backup-bot@rvss-sheets-backup.iam.gserviceaccount.com";
-function payExportSheetId() { return ((state.compensation || {}).exportSheetId) || ""; }
-function setPayExportSheet() {
+// ブックは月ごとに新規作成する。作ったIDは月をキーに覚えておき、同じ月に
+// 何度押しても同じブックを上書きする（同じ月のファイルが増えないように）。
+function payMonthKey() {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function payExportSheets() { return ((state.compensation || {}).exportSheets) || {}; }
+function payExportSheetId() { return payExportSheets()[payMonthKey()] || ""; }
+function payExportShareTo() { return ((state.compensation || {}).exportShareTo) || ""; }
+function setPayExportShareTo() {
   inputDialog(
-    `書き出し先スプレッドシートのURL（${PAY_EXPORT_SA} に編集権限を付けてください）`,
-    payExportSheetId(),
+    "報酬ブックの共有先メールアドレス（複数ならカンマ区切り）",
+    payExportShareTo(),
     v => {
-      const m = /\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/.exec(v || "");
-      const id = m ? m[1] : (v || "").trim();
       if (!state.compensation) state.compensation = { members: {} };
-      state.compensation.exportSheetId = id;
+      state.compensation.exportShareTo = (v || "").trim();
       save(); render();
     }
   );
@@ -1646,11 +1656,12 @@ function buildPayExportRows() {
   return rows;
 }
 async function exportPayToSheets() {
-  if (!payExportSheetId()) { setPayExportSheet(); return; }
+  if (!payExportShareTo()) { setPayExportShareTo(); return; }
   const btn = document.getElementById("pay-export-btn");
   const restore = () => { if (btn) { btn.disabled = false; btn.textContent = "スプシで書き出す"; } };
   if (btn) { btn.disabled = true; btn.textContent = "書き出し中…"; }
-  setStatus("⏳ 書き出し中…");
+  const existing = payExportSheetId();
+  setStatus(existing ? "⏳ 書き出し中…" : "⏳ 今月分のブックを作成中…");
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/sheets-pay-export`, {
       method: "POST",
@@ -1660,14 +1671,26 @@ async function exportPayToSheets() {
         Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
       },
       body: JSON.stringify({
-        spreadsheetId: payExportSheetId(),
+        spreadsheetId: existing,
+        bookTitle: `RVSS報酬一覧 ${payMonthLabel()}分`,
+        shareWith: payExportShareTo().split(/[,、\s]+/).filter(Boolean),
         sheetTitle: payMonthLabel() + "分",
         rows: buildPayExportRows(),
       }),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    setStatus(`✅ 「${data.sheetTitle}」に書き出しました（${data.rows - 1}名）`, "#2f7d4a");
+    if (data.created && data.spreadsheetId) {
+      if (!state.compensation) state.compensation = { members: {} };
+      if (!state.compensation.exportSheets) state.compensation.exportSheets = {};
+      state.compensation.exportSheets[payMonthKey()] = data.spreadsheetId;
+      save();
+    }
+    render();
+    setStatus(
+      `✅ ${data.created ? "新しいブックを作成しました" : "上書きしました"}（${data.rows - 1}名）`,
+      "#2f7d4a"
+    );
   } catch (e) {
     setStatus("❌ 書き出し失敗: " + e.message, "#b73a4a");
   } finally {
@@ -3178,7 +3201,7 @@ const ADMIN_FNS = [
   "addSubGroup","deleteSubGroup","renameSubGroup","addSubGroupMember","removeSubGroupMember",
   "addSchool","deleteSchool","setSchoolLead","addSchoolStudent","removeSchoolStudent",
   "addMember","editMember","saveMemberEdit","deleteMember","restoreMember",
-  "editPayMember","savePayMember","exportPayToSheets","setPayExportSheet",
+  "editPayMember","savePayMember","exportPayToSheets","setPayExportShareTo",
   "editSlotMember","saveSlotMember","reorderItem",
   "toggleNdaSigned","toggleOutsourcingSigned",
   "addCustomTab","deleteCustomTab",
