@@ -728,7 +728,8 @@ function availableUntilHTML(mi) {
   const intent = (mi && mi.tenureIntent) || "";
   const left = monthsUntilYM(mi && mi.availableUntil);
   const note = ((mi && mi.availableUntilNote) || "").trim();
-  if (!intent && left === null && !mi.handoverNeeded) return "";
+  // note だけの人もいるので、それも表示対象に含める（含めないと下の note 分岐に届かない）
+  if (!intent && left === null && !note && !mi.handoverNeeded) return "";
 
   const tags = [];
   // 「卒業予定」というステータスと日付を別々に出すのではなく、
