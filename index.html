@@ -1149,8 +1149,9 @@ function renderStats() {
     { num: s.total,      lbl: "総メンバー数" },
     { num: s.pjAssign,   lbl: "プロジェクト" },
     { num: s.community,  lbl: "組織運営" },
-    { num: s.paid,       lbl: "有償枠" },
   ];
+  // 有償枠の人数は運営側の情報なので、全メンバービューでは出さない
+  if (roleAtLeast("core")) items.push({ num: s.paid, lbl: "有償枠" });
   document.getElementById("stats").innerHTML = items.map(i =>
     `<div class="stat"><div class="num">${i.num}</div><div class="lbl">${i.lbl}</div></div>`
   ).join("");
@@ -2658,7 +2659,7 @@ function renderAll() {
       <span style="font-size:12px;color:var(--muted)">${count}名</span>
       <span style="flex:1;height:1px;background:var(--border)"></span>
     </div>`;
-  const cards = (paidRows.length && unpaidRows.length)
+  const cards = (roleAtLeast("core") && paidRows.length && unpaidRows.length)
     ? `${sectionHead("有償枠", paidRows.length, { bg: "var(--green)", fg: "var(--green-text)" })}
        <div class="grid">${cardsOf(paidRows)}</div>
        <div style="margin-top:20px">${sectionHead("無償枠", unpaidRows.length, { bg: "#f0eee7", fg: "#6b6b6b" })}</div>
