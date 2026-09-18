@@ -2020,30 +2020,52 @@ function renderRecruit() {
     ? new Date(synced).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
     : "未取得";
 
+  // 全メンバー向けには募集枠だけを見せる。進捗の切り替えは core 以上にしか作らない。
+  const showToggle = roleAtLeast("core");
+  const view = showToggle ? recruitView : "student";
   const views = [
     { id: "student",  label: "募集枠で見る" },
     { id: "progress", label: "進捗で見る" },
   ];
-  const toggle = views.map(v => {
-    const active = recruitView === v.id;
+  const toggle = !showToggle ? "" : views.map(v => {
+    const active = view === v.id;
     const style = `background:${active?'#2a2a2a':'#fff'};color:${active?'#fff':'#6b6b6b'};border:1px solid ${active?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${active?'font-weight:700':''}`;
     return `<span class="tag" style="${style}" onclick="onRecruitViewChange('${v.id}')">${v.label}</span>`;
   }).join("");
 
-  const card = recruitView === "progress" ? renderRecruitCardProgress : renderRecruitCardStudent;
+  const card = view === "progress" ? renderRecruitCardProgress : renderRecruitCardStudent;
   return `
-    <div class="view-toggle">${toggle}</div>
-    <div class="sync-note">募集フォームの回答シートと連携（5時間ごとに自動取得）・最終取得 ${escapeHtml(syncedLabel)}</div>
+    ${toggle ? `<div class="view-toggle">${toggle}</div>` : ""}
+    <div class="sync-note">募集フォームの回答シートと連携（4時間ごとに自動取得）・最終取得 ${escapeHtml(syncedLabel)}</div>
     <div class="grid">${entries.map(card).join("")}</div>
   `;
 }
 
 // カード共通：アプリ上のプロジェクトから枠の情報を取り出す
-function recruitSlots(p) {
-  if (!p) return { cap: null, filled: 0, open: null };
+function slotNameKey(n) { return String(n || "").replace(/[\s　]/g, "").replace(/﨑/g, "崎"); }
+
+// 応募が1人入った時点で、その枠は一旦埋まったものとして扱う。
+// すでにアサインされている人は students 側で数えているので、二重に引かない。
+function recruitPendingApplicants(e) {
+  if (!APPLICANT_STATUSES.includes(resolveRecruitStatus(e))) return [];
+  const names = (e.row && e.row.studentNames) || [];
+  if (names.length === 0) return [];
+  const assigned = new Set((e.project ? projectStudentNames(e.project) : []).map(slotNameKey));
+  const seen = new Set();
+  return names.filter(n => {
+    const k = slotNameKey(n);
+    if (!k || assigned.has(k) || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+function recruitSlots(e) {
+  const p = e && e.project;
+  if (!p) return { cap: null, filled: 0, pending: 0, open: null };
   const cap = p.capacity || 2;
   const filled = projectStudentNames(p).length;
-  return { cap, filled, open: Math.max(0, cap - filled) };
+  const pending = recruitPendingApplicants(e).length;
+  return { cap, filled, pending, open: Math.max(0, cap - filled - pending) };
 }
 function recruitMentor(e) {
   return (e.row && e.row.mentor)
@@ -2110,13 +2132,55 @@ function recruitApplicantsHTML(e) {
 }
 
 // 募集要項。member にも見せる項目と core 以上だけの項目を分ける。
+// フォーム回答が届くまでの暫定の概要。シート側に概要が入れば、そちらが優先される。
+const PROVISIONAL_SUMMARIES = {
+  "NOBORDER":
+    "YouTubeチャンネル「NoBorder」の運用やアナリティクス分析を行い、プロのフィードバックを受けながらメディア運用を実地で学ぶ。" +
+    "会議のファシリテーションや議題提案、勉強会の企画運営を担い、データに基づいた正確な分析とスピード感のある現場実務を追求する。",
+  "RVC":
+    "REAL VALUE CLUB会員の満足度最大化を目指し、月例会や懇親会のイベント設計・コンテンツ作成を行う。" +
+    "会員同士の良質なつながりを生むための施策立案とフィードバック分析を繰り返し、コミュニティの熱量と価値を向上させる。",
+  "かにを":
+    "料理人・こめお氏による「世界一の蟹ラーメン」を目指す飲食店の立ち上げと、実店舗の運営を主導する。" +
+    "ファンコミュニティ形成から、実際の店舗経営における戦略立案・実行まで、日本の食文化を世界へ届けるビジネスの最前線を担う。",
+  "農業":
+    "農家の後継者不足問題に挑む「法人向け田んぼオーナー権」の新規事業にて、代表・渡部（ゆるみな）の右腕として事業拡大を牽引します。" +
+    "営業パイプラインの構築やショート動画のPDCAなど、事業開発のリアルな意思決定と実務を最前線で体感しながら新規事業を共に作っていきます。",
+  "ゼロ高": [
+    "【ビジョン】",
+    "生まれた環境に関係なく、すべての子どもたちが経済的に自立し、進学・就職・起業を自分で選べる世界へ。",
+    "生まれた家の経済状況で、進める道が決まってしまう。「お金がないから」で夢を諦める子を、もう出したくない。",
+    "生まれではなく、自分で未来を選べる人を増やす——それがゼロ高の存在理由です。",
+    "",
+    "【MISSION（果たす役割）】",
+    "偏差値でも暗記でもなく、AI時代を自分の力で生き抜く「稼ぐ力」とマインドを育てる。",
+    "出口は起業・進学・就職の3つ。どの道を選んでも自分の足で立てる力を、3年間で磨き上げる。",
+    "向き合うのは2つの課題——",
+    "・格差：国の支援も届かず、でも余裕もない。その狭間にいる家庭がこの国の半分を占める。",
+    "・時代：AIで稼ぐ手段は増えたのに、それを教える学校がない。教育のかたちそのものを更新する。",
+    "",
+    "【VALUE（ゼロ高の強み）】",
+    "・本気の経営者たちが賭ける——堀江貴文・溝口勇児、今年一番の主力事業",
+    "・各業界の第一線が集まる——起業家・経営者・投資家・クリエイター・教育者。時代を動かす本物の大人が、直接子どもに関わる",
+    "・生まれを、自分で書き換えられる——ここを出る頃には「生まれ」ではなく「自分」で人生を選べるようになっている",
+    "",
+    "【一緒に創りにいく未来】",
+    "生まれや家庭の事情で、誰も夢を諦めなくていい世界。",
+    "高校を出る頃には、一人ひとりが「生まれ」ではなく「自分」で人生を選べるようになっている。",
+    "そんな子どもたちが次々と巣立ち、やがて社会の当たり前を塗り替えていく——",
+    "ゼロ高は、その最初の一歩です。一緒に、この国の教育の常識を書き換えにいきましょう。",
+  ].join("\n"),
+};
+function provisionalSummary(e) {
+  return PROVISIONAL_SUMMARIES[normalizeProjectKey(e.name)] || "";
+}
 function recruitDetailHTML(e) {
-  const r = e.row;
-  if (!r) return "";
+  const r = e.row || {};
   const open = openRecruitKeys.has(e.key);
+  const provisional = r.summary ? "" : provisionalSummary(e);
   const rows = [
     ["稼働時間と期間", r.workload],
-    ["プロジェクト概要", r.summary],
+    ["プロジェクト概要", r.summary || provisional],
     ["担ってほしい役割", r.role],
     ["求める人物像・スキル", r.wanted],
     ["得られるスキル・経験", r.gains],
@@ -2130,8 +2194,11 @@ function recruitDetailHTML(e) {
   }
   const filled = rows.filter(([, v]) => v);
   if (filled.length === 0) return "";
+  const note = provisional
+    ? `<div style="font-size:11px;color:var(--muted);margin-bottom:8px">※フォーム回答前の暫定の内容です</div>`
+    : "";
   const body = open
-    ? `<div class="recruit-detail">${filled.map(([k, v]) =>
+    ? `<div class="recruit-detail">${note}${filled.map(([k, v]) =>
         `<div class="section-label">${escapeHtml(k)}</div>
          <div class="recruit-detail-v">${escapeHtml(v)}</div>`).join("")}</div>`
     : "";
@@ -2145,8 +2212,12 @@ function recruitDetailHTML(e) {
 function renderRecruitCardStudent(e) {
   const r = e.row;
   const status = resolveRecruitStatus(e);
-  const { open } = recruitSlots(e.project);
+  const { open, pending } = recruitSlots(e);
   const recruiting = open > 0 && RECRUITING_STATUSES.includes(status);
+  // 誰が応募しているかは core 以上にしか出さないが、人数だけは枠の説明として出す
+  const pendingNote = pending > 0
+    ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">応募${pending}名で${pending}枠を確保中</div>`
+    : "";
 
   let num, unit, color;
   if (open === null)      { num = "—"; unit = "アプリ未登録"; color = "var(--muted)"; }
@@ -2170,6 +2241,7 @@ function renderRecruitCardStudent(e) {
       <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">
         ${recruitStatusControlHTML(e)}${webTest}
       </div>
+      ${pendingNote}
       ${recruitOverrideNoteHTML(e)}
       ${recruitApplicantsHTML(e)}
       ${recruitDetailHTML(e)}
@@ -2192,10 +2264,10 @@ function recruitStepIndex(status) {
 function renderRecruitCardProgress(e) {
   const r = e.row;
   const status = resolveRecruitStatus(e);
-  const { cap, filled, open } = recruitSlots(e.project);
+  const { cap, filled, pending, open } = recruitSlots(e);
   const slotsPill = cap === null
     ? `<span class="count-pill" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">アプリ未登録</span>`
-    : `<span class="count-pill" ${open > 0 ? 'style="background:var(--orange);color:var(--orange-text)"' : ""}>${filled}/${cap}名${open > 0 ? `・空き${open}` : ""}</span>`;
+    : `<span class="count-pill" ${open > 0 ? 'style="background:var(--orange);color:var(--orange-text)"' : ""}>${filled}/${cap}名${pending > 0 ? `・応募${pending}` : ""}${open > 0 ? `・空き${open}` : ""}</span>`;
 
   const idx = recruitStepIndex(status);
   // idx < 0（未募集・辞退）の場合、ステータスは下の info-row 側で必ず表示されるので、
