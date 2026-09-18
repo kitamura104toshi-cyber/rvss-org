@@ -1216,7 +1216,7 @@ function renderContent() {
     el.innerHTML = renderCompensation();
   } else if (currentTab === "all") {
     tb.innerHTML = `
-      <input class="search" id="search" placeholder="メンバー検索（名前・経験・スキル・できること・やりたいこと）…" value="${escapeHtml(allFilterSearch)}" oninput="onAllSearchInput(this.value)" style="min-width:260px"/>
+      <input class="search" id="search" placeholder="メンバー検索（名前・経験・スキル・やりたいこと）…" value="${escapeHtml(allFilterSearch)}" oninput="onAllSearchInput(this.value)" style="min-width:260px"/>
       <button class="btn primary editor-only" onclick="addMember()" style="margin-left:6px">+ メンバーを追加</button>
     `;
     el.innerHTML = renderAll();
@@ -2613,7 +2613,7 @@ function renderAll() {
       if (!q) return true;
       if (n.includes(q)) return true;
       const mi = memberInfo(n) || {};
-      return [mi.experience, mi.skills, mi.canDo, mi.wantToDo].some(v => v && v.includes(q));
+      return [mi.experience, mi.skills, mi.wantToDo].some(v => v && v.includes(q));
     })
     .filter(([n]) => {
       if (!allFilterArea) return true;
@@ -2760,7 +2760,6 @@ function renderMemberCard(n, info) {
       ${profileField("趣味", mi.hobby)}
       ${profileField("経験", mi.experience)}
       ${profileField("スキル", mi.skills)}
-      ${profileField("できること", mi.canDo)}
       ${profileField("やりたいこと", mi.wantToDo)}
       ${profileField("尊敬する人", mi.admires)}
     </div>
@@ -3194,8 +3193,6 @@ function editMember(name) {
     <textarea id="em-experience" rows="2" placeholder="これまでの経験（インターン・部活・制作物など）">${escapeHtml(current.experience||"")}</textarea>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">スキル</label>
     <textarea id="em-skills" rows="2" placeholder="得意なスキル（デザイン・プログラミングなど）">${escapeHtml(current.skills||"")}</textarea>
-    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">できること</label>
-    <textarea id="em-cando" rows="2" placeholder="今すぐ貢献できること">${escapeHtml(current.canDo||"")}</textarea>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">やりたいこと</label>
     <textarea id="em-wantto" rows="2" placeholder="今後挑戦したいこと">${escapeHtml(current.wantToDo||"")}</textarea>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">尊敬する人</label>
@@ -3220,7 +3217,6 @@ function saveMemberEdit(oldName) {
   const lastMonthHours = workloadRaw === "" ? null : Number(workloadRaw);
   const experience = (document.getElementById("em-experience").value||"").trim();
   const skills = (document.getElementById("em-skills").value||"").trim();
-  const canDo = (document.getElementById("em-cando").value||"").trim();
   const wantToDo = (document.getElementById("em-wantto").value||"").trim();
   const hobby = (document.getElementById("em-hobby").value||"").trim();
   const admires = (document.getElementById("em-admires").value||"").trim();
@@ -3258,10 +3254,10 @@ function saveMemberEdit(oldName) {
   const outsourcingSigned = (state.memberOverrides[newName] || {}).outsourcingSigned;
   const isBS = (state.memberOverrides[newName] || {}).isBS;
   const skillCategories = (state.memberOverrides[newName] || {}).skillCategories;
-  if (!univ && !area && !status && !contractStartDate && !availableUntil && !availableUntilNote && !tenureIntent && !handoverNeeded && lastMonthHours == null && !experience && !skills && !canDo && !wantToDo && !hobby && !admires && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories) {
+  if (!univ && !area && !status && !contractStartDate && !availableUntil && !availableUntilNote && !tenureIntent && !handoverNeeded && lastMonthHours == null && !experience && !skills && !wantToDo && !hobby && !admires && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories) {
     delete state.memberOverrides[newName];
   } else {
-    state.memberOverrides[newName] = { university: univ, area: area, status, contractStartDate, availableUntil, availableUntilNote, tenureIntent, handoverNeeded, lastMonthHours, experience, skills, canDo, wantToDo, hobby, admires, ndaSigned, outsourcingSigned, isBS, skillCategories };
+    state.memberOverrides[newName] = { university: univ, area: area, status, contractStartDate, availableUntil, availableUntilNote, tenureIntent, handoverNeeded, lastMonthHours, experience, skills, wantToDo, hobby, admires, ndaSigned, outsourcingSigned, isBS, skillCategories };
   }
   save(); closeModal(); render();
 }
