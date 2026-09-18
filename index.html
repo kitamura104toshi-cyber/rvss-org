@@ -1212,7 +1212,10 @@ function renderContent() {
     } else if (currentTab === "paid") {
     el.innerHTML = renderPaid();
   } else if (currentTab === "pay") {
-    tb.innerHTML = `<button class="btn editor-only" id="pay-export-btn" onclick="exportPayToSheets()">スプシで書き出す</button>`;
+    tb.innerHTML = `
+      <button class="btn editor-only" id="pay-notion-btn" onclick="syncWorkNotesFromNotion()">Notionから業務内容を取得</button>
+      <button class="btn editor-only" id="pay-export-btn" onclick="exportPayToSheets()">スプシで書き出す</button>
+    `;
     el.innerHTML = renderCompensation();
   } else if (currentTab === "all") {
     tb.innerHTML = `
@@ -1706,6 +1709,46 @@ function buildPayWorkRows() {
     rows.push([i + 1, e.name, payDeptLabel(e.name), e.pi.role || "", payWorkNote(e.name)]);
   });
   return rows;
+}
+// Notion の DB_タスク から、その月に完了したタスクを担当者ごとに集めて業務内容欄へ入れる。
+// 書き込みは Edge Function 側で org_state に直接行われ、購読経由でこちらへ返ってくる。
+async function syncWorkNotesFromNotion() {
+  confirmDialog(
+    `${payMonthLabel()}の業務内容をNotionから取り直します。手で書いた内容は上書きされます。よろしいですか？`,
+    runWorkNotesSync
+  );
+}
+async function runWorkNotesSync() {
+  const btn = document.getElementById("pay-notion-btn");
+  const restore = () => { if (btn) { btn.disabled = false; btn.textContent = "Notionから業務内容を取得"; } };
+  if (btn) { btn.disabled = true; btn.textContent = "取得中…"; }
+  setStatus(`⏳ ${payMonthLabel()}分のタスクをNotionから取得中…`);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/notion-worklog-sync`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ month: payMonthKey() }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    // 購読を取りこぼしても画面が古いままにならないよう、ここで読み直す
+    const { data: row } = await sb.from("org_state").select("data").eq("id", ROW_ID).maybeSingle();
+    if (row) applyRemote(row.data);
+    const missed = data.unmatched || [];
+    setStatus(
+      `✅ ${data.matched}名分を取得しました` +
+        (missed.length ? `（名前が一致せず取り込めず: ${missed.join("・")}）` : ""),
+      missed.length ? "#b7862f" : "#2f7d4a"
+    );
+  } catch (e) {
+    setStatus("❌ 取得失敗: " + e.message, "#b73a4a");
+  } finally {
+    restore();
+  }
 }
 async function exportPayToSheets() {
   if (!payExportShareTo()) { setPayExportShareTo(); return; }
