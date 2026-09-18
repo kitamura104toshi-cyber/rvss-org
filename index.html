@@ -2534,8 +2534,10 @@ function renderAll() {
     // 無償枠はバッジを付けない運用なので、有償枠バッジが無い＝無償枠として扱う（BSメンバーは枠の対象外）
     { id: "isUnpaid",     label: "無償枠",           test: (i, n) => !isPaidMember(n) && !isBSMember(n) },
   ];
-  const assignDef = assignDefs.find(d => d.id === allFilterAssign);
-  const assignSummary = assignDefs.map(d => {
+  // アサイン状況・契約状況は運営側の情報なので、全メンバービューでは出さない
+  // （カードからも消しているため、絞り込みだけ残っていると辻褄が合わない）
+  const assignDef = roleAtLeast("core") ? assignDefs.find(d => d.id === allFilterAssign) : null;
+  const assignSummary = !roleAtLeast("core") ? "" : assignDefs.map(d => {
     const count = Object.entries(map).filter(([n, i]) => d.test(i, n)).length;
     const active = allFilterAssign === d.id;
     const style = `background:${active?'#2a2a2a':'#fff'};color:${active?'#fff':'#6b6b6b'};border:1px solid ${active?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${active?'font-weight:700':''}`;
@@ -2572,7 +2574,7 @@ function renderAll() {
     { id: "contractNone",   label: "業務委託契約未締結", test: mi => !mi.outsourcingSigned },
     { id: "contractDone",   label: "業務委託契約締結済み", test: mi => !!mi.outsourcingSigned },
   ];
-  const contractSummary = CONTRACT_FILTERS.map(f => {
+  const contractSummary = !roleAtLeast("core") ? "" : CONTRACT_FILTERS.map(f => {
     const active = allFilterContract === f.id;
     const count = Object.keys(map).filter(n => !isBSMember(n) && f.test(memberInfo(n) || {})).length;
     const style = `background:${active?'#2a2a2a':'#fff'};color:${active?'#fff':'#6b6b6b'};border:1px solid ${active?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${active?'font-weight:700':''}`;
@@ -2620,7 +2622,7 @@ function renderAll() {
     .filter(([n, info]) => !assignDef || assignDef.test(info, n))
     .filter(([n]) => !allFilterSkill || hasSkillCategory(n, allFilterSkill))
     .filter(([n]) => {
-      if (!allFilterContract) return true;
+      if (!allFilterContract || !roleAtLeast("core")) return true;
       if (isBSMember(n)) return false;
       const f = CONTRACT_FILTERS.find(f => f.id === allFilterContract);
       return !f || f.test(memberInfo(n) || {});
@@ -2692,18 +2694,18 @@ function renderAll() {
       <div style="margin-bottom:10px;line-height:2">
         <span style="font-size:12px;color:var(--muted);margin-right:6px">エリア:</span>${areaSummary || '<span style="font-size:12px;color:var(--muted)">なし</span>'}${clearChip}
       </div>
-      <div style="margin-bottom:10px;line-height:2">
+      ${assignSummary ? `<div style="margin-bottom:10px;line-height:2">
         <span style="font-size:12px;color:var(--muted);margin-right:6px">アサイン状況:</span>${assignSummary}
         ${allFilterAssign ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllAssignChange('${allFilterAssign}')">絞り込みを解除</span>` : ""}
-      </div>
+      </div>` : ""}
       <div style="margin-bottom:10px;line-height:2">
         <span style="font-size:12px;color:var(--muted);margin-right:6px">スキル:</span>${skillSummary}
         ${allFilterSkill ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllSkillChange('${allFilterSkill}')">絞り込みを解除</span>` : ""}
       </div>
-      <div style="margin-bottom:${tenureSummary ? "10px" : "0"};line-height:2">
+      ${contractSummary ? `<div style="margin-bottom:${tenureSummary ? "10px" : "0"};line-height:2">
         <span style="font-size:12px;color:var(--muted);margin-right:6px">契約状況:</span>${contractSummary}
         ${allFilterContract ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllContractChange('${allFilterContract}')">絞り込みを解除</span>` : ""}
-      </div>
+      </div>` : ""}
       ${tenureSummary ? `<div style="margin-bottom:10px;line-height:2">
         <span style="font-size:12px;color:var(--muted);margin-right:6px">残り活動期間:</span>${tenureSummary}
         ${allFilterTenure ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllTenureChange('${allFilterTenure}')">絞り込みを解除</span>` : ""}
@@ -2725,34 +2727,41 @@ function renderMemberCard(n, info) {
     <div class="section-label">${escapeHtml(label)}</div>
     <div style="font-size:13px;line-height:1.6;white-space:pre-wrap;margin-bottom:10px;color:${value ? "var(--text)" : "var(--muted)"}">${value ? escapeHtml(value) : "未設定"}</div>
   `;
+  // 全メンバー向けビューでは、契約・所属・稼働といった運営側の情報は出さず、
+  // Canvaの自己紹介に当たる項目だけを見せる。CSSで隠すのではなくHTMLを作らない。
+  const showAdmin = roleAtLeast("core");
   return `
     <div class="card">
       <div class="card-head">
-        <div class="card-title">${escapeHtml(n)}${mi.isBS ? ` <span class="tag" style="background:#2a2a2a;color:#fff;font-size:11px;vertical-align:middle">BS</span>` : ""}${isPaidMember(n) ? ` <span class="tag" style="background:var(--green);color:var(--green-text);font-size:11px;vertical-align:middle">有償</span>` : ""}${mi.status ? ` <span class="tag" style="background:var(--pink);color:var(--pink-text);font-size:11px;vertical-align:middle">${escapeHtml(mi.status)}</span>` : ""}</div>
+        <div class="card-title">${escapeHtml(n)}${showAdmin && mi.isBS ? ` <span class="tag" style="background:#2a2a2a;color:#fff;font-size:11px;vertical-align:middle">BS</span>` : ""}${showAdmin && isPaidMember(n) ? ` <span class="tag" style="background:var(--green);color:var(--green-text);font-size:11px;vertical-align:middle">有償</span>` : ""}${mi.status ? ` <span class="tag" style="background:var(--pink);color:var(--pink-text);font-size:11px;vertical-align:middle">${escapeHtml(mi.status)}</span>` : ""}</div>
         <div style="display:flex;gap:4px;align-items:center">
           <button class="btn editor-only" onclick="editMember('${n}')" style="font-size:11px;padding:4px 10px">編集</button>
           <button class="btn editor-only" onclick="deleteMember('${n}')" title="退会扱いにする（全アサインから除外）" style="font-size:11px;padding:4px 10px;color:var(--pink-text)">退会</button>
         </div>
       </div>
-      ${mi.isBS ? "" : `<div style="margin-bottom:10px">
+      ${showAdmin && !mi.isBS ? `<div style="margin-bottom:10px">
         ${ndaStatusTagHTML(n, mi)}
         ${outsourcingStatusTagHTML(n, mi.outsourcingSigned)}
-      </div>`}
+      </div>` : ""}
       <div style="line-height:1.8;margin-bottom:12px">
         ${mi.university ? univTagHTML(mi.university) : ""}
         ${mi.area ? areaTagHTML(mi.area) : ""}
-        ${availableUntilHTML(mi)}
-        ${referralHTML(n, mi)}
-        ${info.pjs.map(p=>`<span class="tag pj">${escapeHtml(p)}</span>`).join(" ")}
-        ${info.depts.map(d=>`<span class="tag">${escapeHtml(d)}</span>`).join(" ")}
-        ${(info.schools||[]).map(s=>`<span class="tag" style="background:var(--purple);color:var(--purple-text)">スクール:${escapeHtml(s)}</span>`).join(" ")}
+        ${showAdmin ? `
+          ${availableUntilHTML(mi)}
+          ${referralHTML(n, mi)}
+          ${info.pjs.map(p=>`<span class="tag pj">${escapeHtml(p)}</span>`).join(" ")}
+          ${info.depts.map(d=>`<span class="tag">${escapeHtml(d)}</span>`).join(" ")}
+          ${(info.schools||[]).map(s=>`<span class="tag" style="background:var(--purple);color:var(--purple-text)">スクール:${escapeHtml(s)}</span>`).join(" ")}
+        ` : ""}
       </div>
-      ${contractRemainingHTML(mi.contractStartDate)}
-      ${workloadHTML(mi.lastMonthHours)}
+      ${showAdmin ? contractRemainingHTML(mi.contractStartDate) : ""}
+      ${showAdmin ? workloadHTML(mi.lastMonthHours) : ""}
+      ${profileField("趣味", mi.hobby)}
       ${profileField("経験", mi.experience)}
       ${profileField("スキル", mi.skills)}
       ${profileField("できること", mi.canDo)}
       ${profileField("やりたいこと", mi.wantToDo)}
+      ${profileField("尊敬する人", mi.admires)}
     </div>
   `;
 }
@@ -3178,6 +3187,8 @@ function editMember(name) {
     </label>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">前月稼働時間（h）｜通常はNotionと連携して自動更新</label>
     <input id="em-workload" type="number" min="0" step="0.5" value="${current.lastMonthHours!=null?current.lastMonthHours:""}" placeholder="例：45"/>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">趣味</label>
+    <input id="em-hobby" value="${escapeHtml(current.hobby||"")}" placeholder="例：旅行、ダンス、ドライブ"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">経験</label>
     <textarea id="em-experience" rows="2" placeholder="これまでの経験（インターン・部活・制作物など）">${escapeHtml(current.experience||"")}</textarea>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">スキル</label>
@@ -3186,6 +3197,8 @@ function editMember(name) {
     <textarea id="em-cando" rows="2" placeholder="今すぐ貢献できること">${escapeHtml(current.canDo||"")}</textarea>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">やりたいこと</label>
     <textarea id="em-wantto" rows="2" placeholder="今後挑戦したいこと">${escapeHtml(current.wantToDo||"")}</textarea>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">尊敬する人</label>
+    <input id="em-admires" value="${escapeHtml(current.admires||"")}" placeholder="例：両親"/>
     <div class="actions">
       <button class="btn" onclick="closeModal()">キャンセル</button>
       <button class="btn primary" onclick="saveMemberEdit('${name}')">保存</button>
@@ -3208,6 +3221,8 @@ function saveMemberEdit(oldName) {
   const skills = (document.getElementById("em-skills").value||"").trim();
   const canDo = (document.getElementById("em-cando").value||"").trim();
   const wantToDo = (document.getElementById("em-wantto").value||"").trim();
+  const hobby = (document.getElementById("em-hobby").value||"").trim();
+  const admires = (document.getElementById("em-admires").value||"").trim();
   if (!state.memberOverrides) state.memberOverrides = {};
 
   // 名前変更があれば全アサインの参照も更新
@@ -3242,10 +3257,10 @@ function saveMemberEdit(oldName) {
   const outsourcingSigned = (state.memberOverrides[newName] || {}).outsourcingSigned;
   const isBS = (state.memberOverrides[newName] || {}).isBS;
   const skillCategories = (state.memberOverrides[newName] || {}).skillCategories;
-  if (!univ && !area && !status && !contractStartDate && !availableUntil && !availableUntilNote && !tenureIntent && !handoverNeeded && lastMonthHours == null && !experience && !skills && !canDo && !wantToDo && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories) {
+  if (!univ && !area && !status && !contractStartDate && !availableUntil && !availableUntilNote && !tenureIntent && !handoverNeeded && lastMonthHours == null && !experience && !skills && !canDo && !wantToDo && !hobby && !admires && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories) {
     delete state.memberOverrides[newName];
   } else {
-    state.memberOverrides[newName] = { university: univ, area: area, status, contractStartDate, availableUntil, availableUntilNote, tenureIntent, handoverNeeded, lastMonthHours, experience, skills, canDo, wantToDo, ndaSigned, outsourcingSigned, isBS, skillCategories };
+    state.memberOverrides[newName] = { university: univ, area: area, status, contractStartDate, availableUntil, availableUntilNote, tenureIntent, handoverNeeded, lastMonthHours, experience, skills, canDo, wantToDo, hobby, admires, ndaSigned, outsourcingSigned, isBS, skillCategories };
   }
   save(); closeModal(); render();
 }
