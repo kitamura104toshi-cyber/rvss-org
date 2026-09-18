@@ -633,10 +633,10 @@ function univTagHTML(univ) {
   return `<span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">${escapeHtml(univ)}</span>`;
 }
 
-// ====== 在籍予定（卒業・継続の意思確認） ======
+// ====== 残り活動期間（卒業・継続の意思確認） ======
 // 卒業タイミングのヒアリング結果を memberOverrides に持つ。
 //   tenureIntent       "卒業" | "継続" | ""（未確認）
-//   availableUntil     "YYYY-MM" または "YYYY-MM-DD"（ヒアリング表の「卒業関連日」）
+//   availableUntil     "YYYY-MM" または "YYYY-MM-DD"（いつまで活動するか）
 //   handoverNeeded     引き継ぎ対応が要るか
 //   availableUntilNote 継続予定期間・コメントをまとめた自由記述
 // 残り月数は保存せず都度計算する。期日そのものを持てば月をまたいでも表示が追随する。
@@ -684,7 +684,7 @@ function availableUntilHTML(mi) {
       : "background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc";
     tags.push(`<span class="tag" style="${s}"${note ? ` title="${escapeHtml(note)}"` : ""}>${tenureDateLabel(mi.availableUntil)}・${leftLabel}${note ? " ※" : ""}</span>`);
   } else if (note) {
-    tags.push(`<span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc" title="${escapeHtml(note)}">在籍予定 ※</span>`);
+    tags.push(`<span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc" title="${escapeHtml(note)}">残り活動期間 ※</span>`);
   }
   if (mi.handoverNeeded) {
     tags.push(`<span class="tag" style="background:var(--orange);color:var(--orange-text)">引き継ぎ要</span>`);
@@ -729,7 +729,7 @@ function onAllContractChange(v) {
   if (el) el.innerHTML = renderAll();
 }
 
-// 全メンバータブの在籍予定フィルター（core 以上のみ。"" = すべて）
+// 全メンバータブの残り活動期間フィルター（core 以上のみ。"" = すべて）
 let allFilterTenure = "";
 function onAllTenureChange(v) {
   allFilterTenure = (allFilterTenure === v) ? "" : v;
@@ -1160,6 +1160,7 @@ function renderContent() {
     } else if (currentTab === "paid") {
     el.innerHTML = renderPaid();
   } else if (currentTab === "pay") {
+    tb.innerHTML = `<button class="btn editor-only" id="pay-export-btn" onclick="exportPayToSheets()">スプシで書き出す</button>`;
     el.innerHTML = renderCompensation();
   } else if (currentTab === "all") {
     tb.innerHTML = `
@@ -1375,6 +1376,33 @@ function computePay(name) {
   return { payable: true, hours, lines, total: lines.reduce((s, l) => s + l.amount, 0) };
 }
 
+// 支払額をプロジェクトと組織運営に按分する。
+// 各PJ按分 = 支払額 × そのPJの稼働 ÷ 総稼働。組織運営はその残り（端数がどこにも消えないように引き算で出す）。
+function payAllocation(name, total) {
+  const mi = memberInfo(name) || {};
+  const hours = typeof mi.lastMonthHours === "number" ? mi.lastMonthHours : 0;
+  const pjTotal = typeof mi.projectHoursTotal === "number" ? mi.projectHoursTotal : 0;
+  const buckets = mi.projectHours || {};
+  if (!hours || !total) return null;
+  const rows = Object.entries(buckets)
+    .sort((a, b) => b[1] - a[1])
+    .map(([pj, h]) => ({ name: pj, hours: h, amount: Math.round(total * h / hours) }));
+  const pjAmount = rows.reduce((s, r) => s + r.amount, 0);
+  return {
+    rows, pjAmount,
+    orgHours: Math.round((hours - pjTotal) * 10) / 10,
+    orgAmount: total - pjAmount,
+    hours, pjTotal,
+  };
+}
+function hasProjectWork(name) {
+  const mi = memberInfo(name) || {};
+  if (typeof mi.projectHoursTotal === "number") return mi.projectHoursTotal > 0;
+  // Notion連携前のフォールバック：アプリ上のプロジェクト所属で判定する
+  const info = buildMemberMap()[name];
+  return !!(info && info.pjs.length > 0);
+}
+
 // 認定の判断材料。条件を満たしていても自動では付けない。
 function managerEligible(name) {
   const pi = payInfoOf(name);
@@ -1411,15 +1439,22 @@ function renderCompensation() {
     const open = openPayNames.has(r.name);
     const hint = !pi.isManager && managerEligible(r.name)
       ? ` <span class="tag" style="background:var(--blue);color:var(--blue-text);font-size:10px">認定候補</span>` : "";
+    const alloc = payAllocation(r.name, r.calc.total);
+    const allocHTML = alloc && alloc.rows.length ? `
+      <div class="pay-line" style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border);color:var(--muted);font-size:11px"><span>按分</span><span>稼働 ${alloc.hours}h</span></div>
+      ${alloc.rows.map(a => `<div class="pay-line"><span>${escapeHtml(a.name)}（${a.hours}h）</span><span>${yen(a.amount)}</span></div>`).join("")}
+      <div class="pay-line"><span>組織運営（${alloc.orgHours}h）</span><span>${yen(alloc.orgAmount)}</span></div>` : "";
     const detail = open ? `
-      <tr class="pay-detail"><td colspan="9">
+      <tr class="pay-detail"><td colspan="10">
         ${r.calc.lines.map(l => `<div class="pay-line"><span>${escapeHtml(l.label)}</span><span>${yen(l.amount)}</span></div>`).join("")}
         <div class="pay-line total"><span>合計</span><span>${yen(r.calc.total)}</span></div>
+        ${allocHTML}
       </td></tr>` : "";
     return `
       <tr class="pay-row" onclick="togglePayDetail(${jsArg(r.name)})">
         ${cell(`${open ? "▲" : "▼"} ${escapeHtml(r.name)}${hint}`)}
         ${cell(r.calc.hours != null ? r.calc.hours + "h" : "—")}
+        ${cell(alloc && alloc.pjTotal > 0 ? alloc.pjTotal + "h" : "")}
         ${cell(typeof pi.attendanceRate === "number" ? pi.attendanceRate + "%" : '<span style="color:var(--pink-text)">未入力</span>')}
         ${cell(typeof pi.score360 === "number" ? pi.score360.toFixed(2) : "—")}
         ${cell(pi.referral ? "有" : "")}
@@ -1436,11 +1471,31 @@ function renderCompensation() {
     <tr class="pay-row" style="color:var(--muted)">
       ${cell(escapeHtml(r.name))}
       ${cell(r.calc.hours != null ? r.calc.hours + "h" : "—")}
-      <td colspan="6">${escapeHtml(r.calc.reason)}</td>
+      <td colspan="7">${escapeHtml(r.calc.reason)}</td>
       <td style="text-align:right">${yen(0)}
         <button class="btn editor-only" onclick="editPayMember(${jsArg(r.name)})" style="font-size:10px;padding:2px 8px;margin-left:8px">編集</button>
       </td>
     </tr>`;
+
+  // プロジェクトに関与している人とそうでない人でブロックを分ける（兼任は関与側に入る）
+  const pjMembers = payable.filter(r => hasProjectWork(r.name));
+  const orgMembers = payable.filter(r => !hasProjectWork(r.name));
+  const sumOf = list => list.reduce((s, r) => s + r.calc.total, 0);
+  const block = (title, list, rowFn) => !list.length ? "" : `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head" style="margin-bottom:8px">
+        <div class="card-title" style="font-size:14px">${title}（${list.length}名）</div>
+        <div style="font-weight:700">${yen(sumOf(list))}</div>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="pay-table">
+          <thead><tr>
+            <th>氏名</th><th>稼働</th><th>PJ稼働</th><th>出席率</th><th>360°</th><th>リファ</th><th>スクール</th><th>Mgr</th><th>調整</th><th style="text-align:right">最終金額</th>
+          </tr></thead>
+          <tbody>${list.map(rowFn).join("")}</tbody>
+        </table>
+      </div>
+    </div>`;
 
   const warn = [];
   if (missingScore) warn.push(`360°評価が未入力 ${missingScore}名`);
@@ -1462,23 +1517,111 @@ function renderCompensation() {
         360°評価 3.5以上 ${yen(75000)}・3.0以上 ${yen(25000)}・2.5以上 ${yen(5000)}／
         スクール受講 ${yen(PAY_RULES.schoolBonus)}／マネージャー ${yen(PAY_RULES.managerPay)}
       </div>
-    </div>
-    <div class="card">
-      <div style="overflow-x:auto">
-        <table class="pay-table">
-          <thead><tr>
-            <th>氏名</th><th>稼働</th><th>出席率</th><th>360°</th><th>リファ</th><th>スクール</th><th>Mgr</th><th>調整</th><th style="text-align:right">最終金額</th>
-          </tr></thead>
-          <tbody>${payable.map(row).join("")}</tbody>
-        </table>
+      <div class="editor-only" style="font-size:11px;color:var(--muted);margin-top:8px">
+        書き出し先: ${payExportSheetId()
+          ? `<a href="https://docs.google.com/spreadsheets/d/${escapeHtml(payExportSheetId())}/edit" target="_blank" rel="noopener">スプレッドシート</a>`
+          : "<span style='color:var(--pink-text)'>未設定</span>"}
+        <span style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="setPayExportSheet()">変更</span>
       </div>
-      ${unpayable.length ? `
-        <div style="margin-top:20px;padding-top:12px;border-top:1px dashed var(--border)">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">支給対象外（${unpayable.length}名）</div>
-          <div style="overflow-x:auto"><table class="pay-table"><tbody>${unpayable.map(unpaidRow).join("")}</tbody></table></div>
-        </div>` : ""}
     </div>
+    ${block("プロジェクト関与", pjMembers, row)}
+    ${block("組織運営のみ", orgMembers, row)}
+    ${unpayable.length ? `
+      <div class="card">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">支給対象外（${unpayable.length}名）</div>
+        <div style="overflow-x:auto"><table class="pay-table"><tbody>${unpayable.map(unpaidRow).join("")}</tbody></table></div>
+      </div>` : ""}
   `;
+}
+
+// ====== 報酬一覧のスプレッドシート書き出し ======
+// 金額を扱うので、バックアップ用スプシ（リンクを知っていれば誰でも編集可）には書かない。
+// 書き出し先は管理者が用意した非公開スプレッドシートを登録して使う。
+// 計算はここ（クライアント側）で済ませて行データだけ送る。Edge Function 側に
+// 計算ルールを二重に持たせると、片方だけ直したときに静かに食い違うため。
+const PAY_EXPORT_SA = "sheets-backup-bot@rvss-sheets-backup.iam.gserviceaccount.com";
+function payExportSheetId() { return ((state.compensation || {}).exportSheetId) || ""; }
+function setPayExportSheet() {
+  inputDialog(
+    `書き出し先スプレッドシートのURL（${PAY_EXPORT_SA} に編集権限を付けてください）`,
+    payExportSheetId(),
+    v => {
+      const m = /\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/.exec(v || "");
+      const id = m ? m[1] : (v || "").trim();
+      if (!state.compensation) state.compensation = { members: {} };
+      state.compensation.exportSheetId = id;
+      save(); render();
+    }
+  );
+}
+function payLineAmount(calc, prefix) {
+  const l = calc.lines.find(x => x.label.startsWith(prefix));
+  return l ? l.amount : 0;
+}
+function buildPayExportRows() {
+  const map = buildMemberMap();
+  const rows = [[
+    "担当者", "区分", "最終金額", "稼働時間", "稼働時間ペナルティ", "出席率", "出席率ペナルティ",
+    "360°評価", "360°評価加算", "スクール受講加算", "マネージャー報酬", "手動調整", "手動調整の理由",
+    "PJ稼働", "PJ按分", "組織運営稼働", "組織運営按分", "PJ内訳",
+  ]];
+  const entries = Object.keys(map).filter(n => !isBSMember(n))
+    .map(n => ({ name: n, calc: computePay(n), pi: payInfoOf(n) }))
+    .sort((a, b) => (b.calc.hours || 0) - (a.calc.hours || 0));
+  for (const e of entries) {
+    const c = e.calc, pi = e.pi;
+    const alloc = c.payable ? payAllocation(e.name, c.total) : null;
+    rows.push([
+      e.name,
+      !c.payable ? "支給対象外" : hasProjectWork(e.name) ? "プロジェクト関与" : "組織運営のみ",
+      c.total,
+      c.hours != null ? c.hours : "",
+      payLineAmount(c, "稼働時間ペナルティ"),
+      typeof pi.attendanceRate === "number" ? pi.attendanceRate / 100 : "",
+      payLineAmount(c, "出席率ペナルティ"),
+      typeof pi.score360 === "number" ? pi.score360 : "",
+      payLineAmount(c, "360°評価加算"),
+      payLineAmount(c, "スクール受講加算"),
+      payLineAmount(c, "マネージャー報酬"),
+      payLineAmount(c, "手動調整"),
+      pi.adjustNote || "",
+      alloc ? alloc.pjTotal : "",
+      alloc ? alloc.pjAmount : "",
+      alloc ? alloc.orgHours : "",
+      alloc ? alloc.orgAmount : "",
+      alloc ? alloc.rows.map(a => `${a.name} ${a.hours}h ${a.amount}`).join(" / ") : "",
+    ]);
+  }
+  return rows;
+}
+async function exportPayToSheets() {
+  if (!payExportSheetId()) { setPayExportSheet(); return; }
+  const btn = document.getElementById("pay-export-btn");
+  const restore = () => { if (btn) { btn.disabled = false; btn.textContent = "スプシで書き出す"; } };
+  if (btn) { btn.disabled = true; btn.textContent = "書き出し中…"; }
+  setStatus("⏳ 書き出し中…");
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/sheets-pay-export`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        spreadsheetId: payExportSheetId(),
+        sheetTitle: payMonthLabel() + "分",
+        rows: buildPayExportRows(),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    setStatus(`✅ 「${data.sheetTitle}」に書き出しました（${data.rows - 1}名）`, "#2f7d4a");
+  } catch (e) {
+    setStatus("❌ 書き出し失敗: " + e.message, "#b73a4a");
+  } finally {
+    restore();
+  }
 }
 
 function editPayMember(name) {
@@ -2287,7 +2430,7 @@ function renderAll() {
     return `<span class="tag" style="${style}" onclick="onAllContractChange('${f.id}')">${f.label} ${count}</span>`;
   }).join(" ");
 
-  // 在籍予定フィルター（core 以上のみ。引き継ぎ計画で「もうすぐ抜ける人」を拾うため）
+  // 残り活動期間フィルター（core 以上のみ。引き継ぎ計画で「もうすぐ抜ける人」を拾うため）
   const TENURE_FILTERS = [
     { id: "leaving", label: "卒業予定", test: mi => mi.tenureIntent === "卒業" },
     { id: "staying", label: "継続予定", test: mi => mi.tenureIntent === "継続" },
@@ -2396,7 +2539,7 @@ function renderAll() {
         ${allFilterContract ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllContractChange('${allFilterContract}')">絞り込みを解除</span>` : ""}
       </div>
       ${tenureSummary ? `<div style="margin-bottom:0;line-height:2">
-        <span style="font-size:12px;color:var(--muted);margin-right:6px">在籍予定:</span>${tenureSummary}
+        <span style="font-size:12px;color:var(--muted);margin-right:6px">残り活動期間:</span>${tenureSummary}
         ${allFilterTenure ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllTenureChange('${allFilterTenure}')">絞り込みを解除</span>` : ""}
       </div>` : ""}
     </div>
@@ -2855,7 +2998,7 @@ function editMember(name) {
       <option value="継続"${current.tenureIntent==="継続"?" selected":""}>継続</option>
       <option value="卒業"${current.tenureIntent==="卒業"?" selected":""}>卒業</option>
     </select>
-    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">卒業関連日（年月、または年月日）</label>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">残り活動期間（いつまで活動するか。年月、または年月日）</label>
     <input id="em-until" value="${escapeHtml(current.availableUntil||"")}" placeholder="例：2027-03-31"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">継続予定期間・コメント</label>
     <input id="em-until-note" value="${escapeHtml(current.availableUntilNote||"")}" placeholder="例：大学卒業まで／留年したら継続"/>
@@ -2954,7 +3097,7 @@ const ADMIN_FNS = [
   "addSubGroup","deleteSubGroup","renameSubGroup","addSubGroupMember","removeSubGroupMember",
   "addSchool","deleteSchool","setSchoolLead","addSchoolStudent","removeSchoolStudent",
   "addMember","editMember","saveMemberEdit","deleteMember","restoreMember",
-  "editPayMember","savePayMember",
+  "editPayMember","savePayMember","exportPayToSheets","setPayExportSheet",
   "editSlotMember","saveSlotMember","reorderItem",
   "toggleNdaSigned","toggleOutsourcingSigned",
   "addCustomTab","deleteCustomTab",
