@@ -909,7 +909,7 @@ function ensureFields(s) {
   // アプリ側からは編集しないため、未同期でも落ちないよう空で初期化しておく。
   if (!s.recruitment) s.recruitment = { syncedAt: "", rows: [] };
   // アプリ側で上書きした募集ステータス。同期（sheets-recruitment-sync）はこの層に触らないので、
-  // 5時間ごとの取り込みでアプリの編集が消えることはない。
+  // 4時間ごとの取り込みでアプリの編集が消えることはない。
   if (!s.recruitOverrides) s.recruitOverrides = {};
   // 報酬計算用の入力値（360°評価・出席率・リファ・スクール・マネージャー・手動調整）。
   // 稼働時間だけは memberOverrides.lastMonthHours（Notion連携）を使うのでここには持たない。
