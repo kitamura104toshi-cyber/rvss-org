@@ -2088,12 +2088,22 @@ function buildRecruitEntries() {
     if (!used.has(key)) entries.push({ key, name: r.project, project: null, row: r });
   });
 
-  // 募集が動いているものを上位に。sort は安定なので、同ステータス内の並びは元のまま保たれる。
+  // 空きがある案件を左上から先に並べる。探しに来た人が最初に見るのは
+  // ステータスではなく「入れる枠があるか」なので、枠の有無を第一の基準にする。
+  // 枠が同じならステータス順。sort は安定なので、その中の並びは元のまま保たれる。
   const rank = e => {
     const i = RECRUIT_STATUS_ORDER.indexOf(resolveRecruitStatus(e));
     return i < 0 ? RECRUIT_STATUS_ORDER.length : i;
   };
-  return entries.sort((a, b) => rank(a) - rank(b));
+  const openOf = e => {
+    const o = recruitSlots(e).open;
+    return typeof o === "number" ? o : -1; // アプリ未登録（枠が不明）は満員より後ろ
+  };
+  return entries.sort((a, b) => {
+    const oa = openOf(a), ob = openOf(b);
+    if ((oa > 0) !== (ob > 0)) return ob > 0 ? 1 : -1;
+    return rank(a) - rank(b);
+  });
 }
 
 // 学生は「入れる枠があるか」、アサイン担当は「案件がどこまで進んだか」を見たいので、
@@ -2178,13 +2188,20 @@ function recruitPendingApplicants(e) {
     return true;
   });
 }
+// 枠数はスプシの「募集人数」列が最新。空欄のときだけアプリ側の設定値を使う。
+function recruitCapacity(e) {
+  const fromSheet = e && e.row && e.row.capacity;
+  if (typeof fromSheet === "number" && fromSheet > 0) return { cap: fromSheet, fromSheet: true };
+  const p = e && e.project;
+  return { cap: (p && p.capacity) || 2, fromSheet: false };
+}
 function recruitSlots(e) {
   const p = e && e.project;
-  if (!p) return { cap: null, filled: 0, pending: 0, open: null };
-  const cap = p.capacity || 2;
+  if (!p) return { cap: null, filled: 0, pending: 0, open: null, capFromSheet: false };
+  const { cap, fromSheet } = recruitCapacity(e);
   const filled = projectStudentNames(p).length;
   const pending = recruitPendingApplicants(e).length;
-  return { cap, filled, pending, open: Math.max(0, cap - filled - pending) };
+  return { cap, filled, pending, open: Math.max(0, cap - filled - pending), capFromSheet: fromSheet };
 }
 function recruitMentor(e) {
   return (e.row && e.row.mentor)
@@ -2331,8 +2348,10 @@ function recruitDetailHTML(e) {
 function renderRecruitCardStudent(e) {
   const r = e.row;
   const status = resolveRecruitStatus(e);
-  const { open, pending } = recruitSlots(e);
-  const recruiting = open > 0 && RECRUITING_STATUSES.includes(status);
+  const { open, pending, capFromSheet } = recruitSlots(e);
+  // 枠が空いていれば色をつける。募集ステータスがどうであれ、入れる枠があるかが先。
+  const hasRoom = open > 0;
+  const recruiting = hasRoom && RECRUITING_STATUSES.includes(status);
   // 誰が応募しているかは core 以上にしか出さないが、人数だけは枠の説明として出す
   const pendingNote = pending > 0
     ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">応募${pending}名で${pending}枠を確保中</div>`
@@ -2350,8 +2369,8 @@ function renderRecruitCardStudent(e) {
     : "";
 
   return `
-    <div class="card" ${recruiting ? 'style="border-color:var(--orange-text)"' : ""}>
-      <div class="open-count">
+    <div class="card" ${hasRoom ? 'style="border-color:var(--orange-text);background:linear-gradient(180deg,var(--orange) 0,transparent 56px)"' : ""}>
+      <div class="open-count" title="${capFromSheet ? "枠数は募集フォームの「募集人数」列" : "枠数はアプリ側の設定値（シートの募集人数が未記入）"}">
         <div class="num" style="color:${color}">${num}</div>
         <div class="unit" style="color:${color}">${unit}</div>
       </div>
