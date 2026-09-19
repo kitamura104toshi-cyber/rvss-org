@@ -721,36 +721,8 @@ function referralHTML(name, mi) {
   return tags.join(" ");
 }
 
-// 誰がいつ抜けるかは全員に見せる情報ではないので、core 以上でのみHTMLを組み立てる
-// （CSSで隠すとDOMには残ってしまうため）。
-function availableUntilHTML(mi) {
-  if (!roleAtLeast("core")) return "";
-  const intent = (mi && mi.tenureIntent) || "";
-  const left = monthsUntilYM(mi && mi.availableUntil);
-  const note = ((mi && mi.availableUntilNote) || "").trim();
-  // note だけの人もいるので、それも表示対象に含める（含めないと下の note 分岐に届かない）
-  if (!intent && left === null && !note && !mi.handoverNeeded) return "";
-
-  const tags = [];
-  // 「卒業予定」というステータスと日付を別々に出すのではなく、
-  // 「卒業まであと6ヶ月」と読める1本の文にする。あと何ヶ月かが知りたい情報のため。
-  const phrase = tenurePhrase(intent, left, tenureDateLabel(mi && mi.availableUntil));
-  if (phrase) {
-    const soon = left !== null && left <= GRADUATION_SOON_MONTHS;
-    const s = soon
-      ? "background:var(--orange);color:var(--orange-text)"
-      : intent === "継続"
-      ? "background:var(--green);color:var(--green-text)"
-      : "background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc";
-    tags.push(`<span class="tag" style="${s}"${note ? ` title="${escapeHtml(note)}"` : ""}>${escapeHtml(phrase)}${note ? " ※" : ""}</span>`);
-  } else if (note) {
-    tags.push(`<span class="tag" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc" title="${escapeHtml(note)}">残り活動期間 ※</span>`);
-  }
-  if (mi.handoverNeeded) {
-    tags.push(`<span class="tag" style="background:var(--orange);color:var(--orange-text)">引き継ぎ要</span>`);
-  }
-  return tags.join(" ");
-}
+// 残り活動期間はカード詳細の項目（contractRemainingHTML）だけに出す。
+// タグ列にも同じ内容を出していたが、二重に見えて読みにくいのでやめた。
 
 let allFilterSearch = "";
 let allFilterArea = "";
@@ -2880,7 +2852,6 @@ function renderMemberCard(n, info) {
         ${mi.university ? univTagHTML(mi.university) : ""}
         ${mi.area ? areaTagHTML(mi.area) : ""}
         ${showAdmin ? `
-          ${availableUntilHTML(mi)}
           ${referralHTML(n, mi)}
           ${info.pjs.map(p=>`<span class="tag pj">${escapeHtml(p)}</span>`).join(" ")}
           ${info.depts.map(d=>`<span class="tag">${escapeHtml(d)}</span>`).join(" ")}
