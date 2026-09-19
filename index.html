@@ -904,6 +904,10 @@ function ensureFields(s) {
   // 稼働時間だけは memberOverrides.lastMonthHours（Notion連携）を使うのでここには持たない。
   if (!s.compensation) s.compensation = { members: {} };
   if (!s.compensation.members) s.compensation.members = {};
+  // 有償枠からの移行1on1と、そのあとどこまで進んだか。
+  // s.transition.members[氏名] = { group, status, note, updatedAt }
+  if (!s.transition) s.transition = { members: {} };
+  if (!s.transition.members) s.transition.members = {};
   (s.projects || []).forEach(p => {
     p.mentors = normalizeMemberList(p.mentors);
     p.students = normalizeMemberList(p.students);
@@ -1051,6 +1055,7 @@ const BASE_TABS = [
   { id: "community", label: "コミュニティ運営",     minRole: "core" },
   { id: "schools",   label: "スクール受講者",       minRole: "core" },
   { id: "paid",      label: "有償枠",               minRole: "core" },
+  { id: "transition",label: "1on1・移行状況",       minRole: "core" },
   { id: "pay",       label: "報酬",                 minRole: "admin" },
 ];
 // core 以上は今までどおりプロジェクトタブから始める。member は先頭の全メンバー。
@@ -1200,6 +1205,9 @@ function renderContent() {
     el.innerHTML = `<div class="grid">${state.schools.map(renderSchool).join("")}</div>`;
     } else if (currentTab === "paid") {
     el.innerHTML = renderPaid();
+  } else if (currentTab === "transition") {
+    tb.innerHTML = `<button class="btn primary" onclick="addTransitionMember()">+ 対象者を追加</button>`;
+    el.innerHTML = renderTransition();
   } else if (currentTab === "pay") {
     tb.innerHTML = `
       <button class="btn editor-only" id="pay-notion-btn" onclick="syncWorkNotesFromNotion()">Notionから業務内容を取得</button>
@@ -1303,6 +1311,128 @@ function concurrentTagsHTML(name) {
   return tags.length
     ? `<div class="concurrent">${tags.join("")}</div>`
     : `<div class="concurrent"><span class="tag" style="background:#f0eee7;color:#6b6b6b">所属なし</span></div>`;
+}
+
+// ====== 1on1・移行状況 ======
+// 有償枠から無償枠やプロジェクトへ移るとき、1on1のあと本人がどこまで進んだかを追う。
+// 状態はコアメンが直接書き換える（sheets 連携ではなく手入力）。
+// state.transition.members[氏名] = { group, status, note, updatedAt }
+const TRANSITION_GROUPS = ["佐々木1on1担当", "北村1on1担当", "新メンバー有償希望"];
+const TRANSITION_STATUSES = [
+  "面談前",
+  "検討中",
+  "同意済み・PJ未接続",
+  "プロジェクト接続待ち",
+  "PJアサイン済み",
+  "無償枠へ移行",
+  "見送り",
+];
+const TRANSITION_STATUS_STYLE = {
+  "面談前":             "background:#f0eee7;color:#6b6b6b",
+  "検討中":             "background:var(--blue);color:var(--blue-text)",
+  "同意済み・PJ未接続": "background:var(--orange);color:var(--orange-text)",
+  "プロジェクト接続待ち": "background:var(--orange);color:var(--orange-text)",
+  "PJアサイン済み":     "background:var(--green);color:var(--green-text)",
+  "無償枠へ移行":       "background:var(--green);color:var(--green-text)",
+  "見送り":             "background:var(--pink);color:var(--pink-text)",
+};
+function transitionMembers() { return ((state.transition || {}).members) || {}; }
+function transitionStatusOf(name) {
+  return (transitionMembers()[name] || {}).status || "面談前";
+}
+function transitionStyle(status) {
+  return TRANSITION_STATUS_STYLE[status] || "background:#f0eee7;color:#6b6b6b";
+}
+function setTransitionField(name, field, value) {
+  if (!name) return;
+  if (!state.transition) state.transition = { members: {} };
+  if (!state.transition.members) state.transition.members = {};
+  const cur = state.transition.members[name] || {};
+  state.transition.members[name] = { ...cur, [field]: value, updatedAt: new Date().toISOString() };
+  // 並び替えでページ先頭に飛ばないようスクロール位置を保つ（募集状況タブと同じ扱い）
+  const y = window.scrollY;
+  save(); render();
+  window.scrollTo(0, y);
+}
+function setTransitionStatus(name, value) { setTransitionField(name, "status", value); }
+function editTransitionNote(name) {
+  const cur = (transitionMembers()[name] || {}).note || "";
+  inputDialog(`${name} のメモ（1on1で聞いたこと・次の一手）`, cur, v => setTransitionField(name, "note", v));
+}
+function addTransitionMember() {
+  pickMember("1on1の対象者を追加", name => {
+    inputDialog("担当グループ（例：佐々木1on1担当）", TRANSITION_GROUPS[0], group => {
+      setTransitionField(name, "group", group || TRANSITION_GROUPS[0]);
+    });
+  }, Object.keys(transitionMembers()));
+}
+function removeTransitionMember(name) {
+  confirmDialog(`${name} をこの一覧から外しますか？（メンバー自体は消えません）`, () => {
+    if (state.transition && state.transition.members) delete state.transition.members[name];
+    save(); render();
+  });
+}
+function transitionUpdatedLabel(v) {
+  const ms = Date.parse(v || "");
+  if (!isFinite(ms)) return "";
+  return new Date(ms).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
+}
+function renderTransitionRow(name, e) {
+  const status = e.status || "面談前";
+  const note = (e.note || "").trim();
+  const opts = TRANSITION_STATUSES.map(s =>
+    `<option value="${escapeHtml(s)}"${s === status ? " selected" : ""}>${escapeHtml(s)}</option>`).join("");
+  const updated = transitionUpdatedLabel(e.updatedAt);
+  return `
+    <div style="padding:10px 0;border-top:1px solid var(--border)">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <span class="tag name-link" style="background:#f5f3ed;color:var(--text);font-weight:600" onclick="goToMemberCard(${jsArg(name)})">${escapeHtml(name)}</span>
+        <select class="recruit-select" style="${transitionStyle(status)}" onchange="setTransitionStatus(${jsArg(name)}, this.value)">${opts}</select>
+        ${updated ? `<span style="font-size:11px;color:var(--muted)">更新 ${escapeHtml(updated)}</span>` : ""}
+        <span style="margin-left:auto;display:flex;gap:10px">
+          <span style="font-size:11px;color:var(--accent);cursor:pointer" onclick="editTransitionNote(${jsArg(name)})">${note ? "メモを編集" : "メモを書く"}</span>
+          <span style="font-size:11px;color:var(--muted);cursor:pointer" onclick="removeTransitionMember(${jsArg(name)})">外す</span>
+        </span>
+      </div>
+      ${note ? `<div style="font-size:12px;line-height:1.7;color:var(--text);white-space:pre-wrap;margin-top:6px">${escapeHtml(note)}</div>` : ""}
+    </div>
+  `;
+}
+function renderTransition() {
+  const all = transitionMembers();
+  const names = Object.keys(all);
+  if (names.length === 0) {
+    return `<div class="sync-note">まだ対象者がいません。「+ 対象者を追加」から登録してください。</div>`;
+  }
+  // 既定の3グループを先に、後から足された独自グループをその後ろに並べる
+  const extra = [...new Set(names.map(n => (all[n].group || "その他")))]
+    .filter(g => !TRANSITION_GROUPS.includes(g)).sort();
+  const groups = [...TRANSITION_GROUPS, ...extra];
+
+  const tally = {};
+  names.forEach(n => { const s = transitionStatusOf(n); tally[s] = (tally[s] || 0) + 1; });
+  const summary = TRANSITION_STATUSES.filter(s => tally[s])
+    .map(s => `<span class="tag" style="${transitionStyle(s)}">${escapeHtml(s)} ${tally[s]}</span>`).join(" ");
+
+  const cards = groups.map(g => {
+    const list = names.filter(n => (all[n].group || "その他") === g);
+    if (list.length === 0) return "";
+    // 進んでいない人を上に出す（この一覧は「次に動かす人」を探すために見るため）
+    list.sort((a, b) =>
+      TRANSITION_STATUSES.indexOf(transitionStatusOf(a)) - TRANSITION_STATUSES.indexOf(transitionStatusOf(b)));
+    return `
+      <div class="card">
+        <div class="card-title" style="font-size:14px">${escapeHtml(g)} <span class="count-pill">${list.length}名</span></div>
+        ${list.map(n => renderTransitionRow(n, all[n])).join("")}
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <div class="sync-note">有償枠からの移行1on1。ステータスとメモはコアメンが直接書き換えられます・全${names.length}名</div>
+    <div style="margin-bottom:14px;line-height:2">${summary}</div>
+    <div class="grid">${cards}</div>
+  `;
 }
 
 function renderPaid() {
