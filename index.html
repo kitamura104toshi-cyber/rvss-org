@@ -2188,20 +2188,15 @@ function recruitPendingApplicants(e) {
     return true;
   });
 }
-// 枠数はスプシの「募集人数」列が最新。空欄のときだけアプリ側の設定値を使う。
-function recruitCapacity(e) {
-  const fromSheet = e && e.row && e.row.capacity;
-  if (typeof fromSheet === "number" && fromSheet > 0) return { cap: fromSheet, fromSheet: true };
-  const p = e && e.project;
-  return { cap: (p && p.capacity) || 2, fromSheet: false };
-}
+// 空き枠はスプシの「募集人数」列がすべて。アサイン管理表の人数からは計算しない。
+// 既存PJは「いま何人募集しているか」を都度フォームで起票する運用で、
+// 定員からアサイン済みを引く出し方は実態と合わないため。
+// 募集人数の記載がなければ「募集なし」として扱う（推測で枠を作らない）。
 function recruitSlots(e) {
-  const p = e && e.project;
-  if (!p) return { cap: null, filled: 0, pending: 0, open: null, capFromSheet: false };
-  const { cap, fromSheet } = recruitCapacity(e);
-  const filled = projectStudentNames(p).length;
+  const wanted = e && e.row ? e.row.capacity : null;
+  if (typeof wanted !== "number" || wanted <= 0) return { wanted: null, pending: 0, open: null };
   const pending = recruitPendingApplicants(e).length;
-  return { cap, filled, pending, open: Math.max(0, cap - filled - pending), capFromSheet: fromSheet };
+  return { wanted, pending, open: Math.max(0, wanted - pending) };
 }
 function recruitMentor(e) {
   return (e.row && e.row.mentor)
@@ -2348,7 +2343,7 @@ function recruitDetailHTML(e) {
 function renderRecruitCardStudent(e) {
   const r = e.row;
   const status = resolveRecruitStatus(e);
-  const { open, pending, capFromSheet } = recruitSlots(e);
+  const { wanted, open, pending } = recruitSlots(e);
   // 枠が空いていれば色をつける。募集ステータスがどうであれ、入れる枠があるかが先。
   const hasRoom = open > 0;
   const recruiting = hasRoom && RECRUITING_STATUSES.includes(status);
@@ -2358,9 +2353,9 @@ function renderRecruitCardStudent(e) {
     : "";
 
   let num, unit, color;
-  if (open === null)      { num = "—"; unit = "アプリ未登録"; color = "var(--muted)"; }
-  else if (open > 0)      { num = open; unit = recruiting ? "枠 募集中" : "枠 空き"; color = "var(--orange-text)"; }
-  else                    { num = 0;    unit = "枠 満員";     color = "var(--muted)"; }
+  if (wanted === null) { num = "—"; unit = "募集なし";   color = "var(--muted)"; }
+  else if (open > 0)   { num = open; unit = recruiting ? "枠 募集中" : "枠 空き"; color = "var(--orange-text)"; }
+  else                 { num = 0;    unit = "枠 応募済み"; color = "var(--muted)"; }
 
   const mentor = recruitMentor(e);
   const webTestStatus = resolveWebTestStatus(e);
@@ -2369,8 +2364,8 @@ function renderRecruitCardStudent(e) {
     : "";
 
   return `
-    <div class="card" ${hasRoom ? 'style="border-color:var(--orange-text);background:linear-gradient(180deg,var(--orange) 0,transparent 56px)"' : ""}>
-      <div class="open-count" title="${capFromSheet ? "枠数は募集フォームの「募集人数」列" : "枠数はアプリ側の設定値（シートの募集人数が未記入）"}">
+    <div class="card" ${hasRoom ? 'style="border-color:var(--orange-text)"' : ""}>
+      <div class="open-count" title="${wanted === null ? "募集フォームに募集人数の記載がありません" : "募集フォームの「募集人数」列より"}">
         <div class="num" style="color:${color}">${num}</div>
         <div class="unit" style="color:${color}">${unit}</div>
       </div>
@@ -2402,10 +2397,10 @@ function recruitStepIndex(status) {
 function renderRecruitCardProgress(e) {
   const r = e.row;
   const status = resolveRecruitStatus(e);
-  const { cap, filled, pending, open } = recruitSlots(e);
-  const slotsPill = cap === null
-    ? `<span class="count-pill" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">アプリ未登録</span>`
-    : `<span class="count-pill" ${open > 0 ? 'style="background:var(--orange);color:var(--orange-text)"' : ""}>${filled}/${cap}名${pending > 0 ? `・応募${pending}` : ""}${open > 0 ? `・空き${open}` : ""}</span>`;
+  const { wanted, pending, open } = recruitSlots(e);
+  const slotsPill = wanted === null
+    ? `<span class="count-pill" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">募集なし</span>`
+    : `<span class="count-pill" ${open > 0 ? 'style="background:var(--orange);color:var(--orange-text)"' : ""}>募集${wanted}枠${pending > 0 ? `・応募${pending}` : ""}${open > 0 ? `・空き${open}` : "・応募済み"}</span>`;
 
   const idx = recruitStepIndex(status);
   // idx < 0（未募集・辞退）の場合、ステータスは下の info-row 側で必ず表示されるので、
