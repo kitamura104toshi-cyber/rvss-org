@@ -348,7 +348,7 @@
   .paid-card { border-top: 4px solid var(--accent); }
   .paid-card.専任 { border-top-color: #2f7d4a; }
   .paid-card.兼任 { border-top-color: #4f63d2; }
-  .paid-card.移行期 { border-top-color: #a8631b; }
+  .paid-card.移行 { border-top-color: #a8631b; }
   .slot .concurrent { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 </style>
 </head>
@@ -881,7 +881,7 @@ function pushToSupabase() {
 const STORAGE_KEY = "rvss-org-v1";
 
 // 有償枠の大枠。この4つ以外は作らない想定なので、タブ側で順序ごと固定する
-const PAID_CATEGORIES = ["組織運営（兼任）", "プロジェクト専任", "プロジェクト兼任", "プロジェクト移行期"];
+const PAID_CATEGORIES = ["組織運営（兼任）", "プロジェクト専任", "プロジェクト兼任", "プロジェクト移行"];
 
 let state = load();
 
@@ -1438,7 +1438,7 @@ function renderTransition() {
 function renderPaid() {
   const total = (state.paidGroups || []).reduce((n, g) => n + (g.members || []).length, 0);
   const cards = (state.paidGroups || []).map((g, gi) => {
-    const cls = g.name.includes("専任") ? "専任" : g.name.includes("移行期") ? "移行期" : "兼任";
+    const cls = g.name.includes("専任") ? "専任" : g.name.includes("移行") ? "移行" : "兼任";
     const rows = (g.members || []).map((m, mi) => `
       <div class="slot" ${reorderData({ type: "paidGroupMembers", gi }, mi)}>
         <div style="min-width:0">
