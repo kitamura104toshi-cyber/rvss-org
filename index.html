@@ -2173,17 +2173,15 @@ function renderRecruit() {
 // カード共通：アプリ上のプロジェクトから枠の情報を取り出す
 function slotNameKey(n) { return String(n || "").replace(/[\s　]/g, "").replace(/﨑/g, "崎"); }
 
-// 応募が1人入った時点で、その枠は一旦埋まったものとして扱う。
-// すでにアサインされている人は students 側で数えているので、二重に引かない。
-function recruitPendingApplicants(e) {
-  if (!APPLICANT_STATUSES.includes(resolveRecruitStatus(e))) return [];
+// シートの「学生の名前」に名前が入った時点で、その人数分だけ枠が埋まる。
+// ステータスもアサイン管理表側の在籍も見ない。シートに書かれた事実だけを数える
+// （アサインが確定した人の名前もここに入る運用のため、在籍済みを除くと枠が減らない）。
+function recruitTakenNames(e) {
   const names = (e.row && e.row.studentNames) || [];
-  if (names.length === 0) return [];
-  const assigned = new Set((e.project ? projectStudentNames(e.project) : []).map(slotNameKey));
   const seen = new Set();
   return names.filter(n => {
     const k = slotNameKey(n);
-    if (!k || assigned.has(k) || seen.has(k)) return false;
+    if (!k || seen.has(k)) return false;
     seen.add(k);
     return true;
   });
@@ -2194,9 +2192,9 @@ function recruitPendingApplicants(e) {
 // 募集人数の記載がなければ「募集なし」として扱う（推測で枠を作らない）。
 function recruitSlots(e) {
   const wanted = e && e.row ? e.row.capacity : null;
-  if (typeof wanted !== "number" || wanted <= 0) return { wanted: null, pending: 0, open: null };
-  const pending = recruitPendingApplicants(e).length;
-  return { wanted, pending, open: Math.max(0, wanted - pending) };
+  if (typeof wanted !== "number" || wanted <= 0) return { wanted: null, taken: 0, open: null };
+  const taken = recruitTakenNames(e).length;
+  return { wanted, taken, open: Math.max(0, wanted - taken) };
 }
 function recruitMentor(e) {
   return (e.row && e.row.mentor)
@@ -2343,19 +2341,19 @@ function recruitDetailHTML(e) {
 function renderRecruitCardStudent(e) {
   const r = e.row;
   const status = resolveRecruitStatus(e);
-  const { wanted, open, pending } = recruitSlots(e);
+  const { wanted, open, taken } = recruitSlots(e);
   // 枠が空いていれば色をつける。募集ステータスがどうであれ、入れる枠があるかが先。
   const hasRoom = open > 0;
   const recruiting = hasRoom && RECRUITING_STATUSES.includes(status);
-  // 誰が応募しているかは core 以上にしか出さないが、人数だけは枠の説明として出す
-  const pendingNote = pending > 0
-    ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">応募${pending}名で${pending}枠を確保中</div>`
+  // 誰の名前が入っているかは core 以上にしか出さないが、人数だけは枠の説明として出す
+  const pendingNote = taken > 0
+    ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">${taken}名分が埋まっています（募集${wanted}枠）</div>`
     : "";
 
   let num, unit, color;
   if (wanted === null) { num = "—"; unit = "募集なし";   color = "var(--muted)"; }
   else if (open > 0)   { num = open; unit = recruiting ? "枠 募集中" : "枠 空き"; color = "var(--orange-text)"; }
-  else                 { num = 0;    unit = "枠 応募済み"; color = "var(--muted)"; }
+  else                 { num = 0;    unit = "枠 満員";     color = "var(--muted)"; }
 
   const mentor = recruitMentor(e);
   const webTestStatus = resolveWebTestStatus(e);
@@ -2397,10 +2395,10 @@ function recruitStepIndex(status) {
 function renderRecruitCardProgress(e) {
   const r = e.row;
   const status = resolveRecruitStatus(e);
-  const { wanted, pending, open } = recruitSlots(e);
+  const { wanted, taken, open } = recruitSlots(e);
   const slotsPill = wanted === null
     ? `<span class="count-pill" style="background:#f5f3ed;color:#6b6b6b;border:1px solid #e5e3dc">募集なし</span>`
-    : `<span class="count-pill" ${open > 0 ? 'style="background:var(--orange);color:var(--orange-text)"' : ""}>募集${wanted}枠${pending > 0 ? `・応募${pending}` : ""}${open > 0 ? `・空き${open}` : "・応募済み"}</span>`;
+    : `<span class="count-pill" ${open > 0 ? 'style="background:var(--orange);color:var(--orange-text)"' : ""}>募集${wanted}枠${taken > 0 ? `・確定${taken}` : ""}${open > 0 ? `・空き${open}` : "・満員"}</span>`;
 
   const idx = recruitStepIndex(status);
   // idx < 0（未募集・辞退）の場合、ステータスは下の info-row 側で必ず表示されるので、
