@@ -1746,9 +1746,8 @@ function renderCompensation() {
           ? escapeHtml(payExportShareTo())
           : "<span style='color:var(--pink-text)'>未設定</span>"}
         <span style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="setPayExportShareTo()">変更</span>
-        <br>報酬ブック: ${payExportBookId()
-          ? `<a href="https://docs.google.com/spreadsheets/d/${escapeHtml(payExportBookId())}/edit" target="_blank" rel="noopener">開く</a>（先月分の下に今月分の推定を積み上げます）`
-          : "未作成（「スプシで書き出す」で新規作成されます）"}
+        <br>月ごとの報酬ブック（同じ月に再実行すると上書き）:
+        ${payExportLinksHTML()}
       </div>
     </div>
     ${block("プロジェクト関与", pjMembers, row)}
@@ -1776,14 +1775,21 @@ function payMonthKey() {
 }
 function payExportSheets() { return ((state.compensation || {}).exportSheets) || {}; }
 function payExportSheetId() { return payExportSheets()[payMonthKey()] || ""; }
-// 月ごとにブックを分けず、1冊に積み上げる。
-// 以前の月別ブックが残っている場合は、最初にできた8月分のブックをそのまま引き継ぐ。
-function payExportBookId() {
-  const c = state.compensation || {};
-  if (c.exportBookId) return c.exportBookId;
+// 書き出した月のブックを新しい順に並べる。月を重ねるほどここに積み上がっていく。
+function payExportLinksHTML() {
   const sheets = payExportSheets();
-  const first = Object.keys(sheets).sort()[0];
-  return first ? sheets[first] : "";
+  const months = Object.keys(sheets).filter(k => sheets[k]).sort().reverse();
+  if (months.length === 0) return "未作成（「スプシで書き出す」で新規作成されます）";
+  const now = new Date();
+  const thisKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return `<div style="display:grid;grid-template-columns:auto auto;gap:2px 14px;justify-content:start;margin-top:4px">${
+    months.map(k => {
+      const [y, m] = k.split("-");
+      const estimate = k >= thisKey ? "（推定）" : "";
+      return `<span>${Number(y)}年${Number(m)}月分${estimate}</span>` +
+        `<a href="https://docs.google.com/spreadsheets/d/${escapeHtml(sheets[k])}/edit" target="_blank" rel="noopener">開く</a>`;
+    }).join("")
+  }</div>`;
 }
 function payExportShareTo() { return ((state.compensation || {}).exportShareTo) || ""; }
 function setPayExportShareTo() {
@@ -1880,25 +1886,14 @@ function buildPayAllocationRows() {
   return rows;
 }
 
-// ====== 月を積み上げた書き出し ======
-// 1冊のブックに月ごとの区画を縦に積む。先頭が確定した先月分、その下が今月分の推定。
-// 各区画の1行目は「2026年8月分給与」のような見出しで、その下がいつもの表。
-function withPayMode(m, fn) {
-  const prev = payMode;
-  payMode = m;
-  try { return fn(); } finally { payMode = prev; }
+// ====== 月ごとの書き出し ======
+// ブックは月ごとに分ける。アプリ側には月とリンクの一覧が積み上がっていく。
+// 各ブックの1行目は「2026年9月分給与の推定」のような見出しで、その下がいつもの表。
+function paySectionTitle() {
+  return `${payMonthLabel()}分給与${payIsForecast() ? "の推定" : ""}`;
 }
-function paySectionTitle(mode) {
-  return withPayMode(mode, () => `${payMonthLabel()}分給与${mode === "forecast" ? "の推定" : ""}`);
-}
-function stackPaySections(build) {
-  const rows = [];
-  ["actual", "forecast"].forEach((m, i) => {
-    if (i > 0) { rows.push([]); rows.push([]); }
-    rows.push([paySectionTitle(m)]);
-    withPayMode(m, build).forEach(r => rows.push(r));
-  });
-  return rows;
+function paySectionRows(build) {
+  return [[paySectionTitle()], ...build()];
 }
 
 function buildPayWorkRows() {
@@ -1954,8 +1949,8 @@ async function exportPayToSheets() {
   const btn = document.getElementById("pay-export-btn");
   const restore = () => { if (btn) { btn.disabled = false; btn.textContent = "スプシで書き出す"; } };
   if (btn) { btn.disabled = true; btn.textContent = "書き出し中…"; }
-  const existing = payExportBookId();
-  setStatus(existing ? "⏳ 書き出し中…" : "⏳ ブックを作成中…");
+  const existing = payExportSheetId();
+  setStatus(existing ? "⏳ 書き出し中…" : `⏳ ${payMonthLabel()}分のブックを作成中…`);
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/sheets-pay-export`, {
       method: "POST",
@@ -1966,13 +1961,13 @@ async function exportPayToSheets() {
       },
       body: JSON.stringify({
         spreadsheetId: existing,
-        bookTitle: "RVSS報酬一覧",
+        bookTitle: `RVSS報酬一覧 ${paySectionTitle()}`,
         shareWith: payExportShareTo().split(/[,、\s]+/).filter(Boolean),
         // 見出し行を挟むので、書式に使うヘッダーは2行目（0始まりで1）にある
         tabs: [
-          { title: "報酬一覧", rows: stackPaySections(buildPaySheetRows), headerRowIndex: 1 },
-          { title: "按分",     rows: stackPaySections(buildPayAllocationRows), headerRowIndex: 1 },
-          { title: "業務内容", rows: stackPaySections(buildPayWorkRows), headerRowIndex: 1 },
+          { title: "報酬一覧", rows: paySectionRows(buildPaySheetRows), headerRowIndex: 1 },
+          { title: "按分",     rows: paySectionRows(buildPayAllocationRows), headerRowIndex: 1 },
+          { title: "業務内容", rows: paySectionRows(buildPayWorkRows), headerRowIndex: 1 },
         ],
       }),
     });
@@ -1981,7 +1976,8 @@ async function exportPayToSheets() {
     if (data.url) window.open(data.url, "_blank", "noopener");
     if (data.created && data.spreadsheetId) {
       if (!state.compensation) state.compensation = { members: {} };
-      state.compensation.exportBookId = data.spreadsheetId;
+      if (!state.compensation.exportSheets) state.compensation.exportSheets = {};
+      state.compensation.exportSheets[payMonthKey()] = data.spreadsheetId;
       save();
     }
     render();
