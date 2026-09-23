@@ -1210,7 +1210,12 @@ function renderContent() {
     el.innerHTML = renderTransition();
   } else if (currentTab === "pay") {
     tb.innerHTML = `
-      <button class="btn editor-only" id="pay-notion-btn" onclick="syncWorkNotesFromNotion()">Notionから業務内容を取得</button>
+      ${["actual", "forecast"].map(m => {
+        const on = payMode === m;
+        const label = m === "actual" ? "先月分（確定）" : "今月分（予想）";
+        return `<span class="tag" style="background:${on?'#2a2a2a':'#fff'};color:${on?'#fff':'#6b6b6b'};border:1px solid ${on?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${on?'font-weight:700':''}" onclick="setPayMode('${m}')">${label}</span>`;
+      }).join("")}
+      <button class="btn editor-only" id="pay-notion-btn" onclick="syncWorkNotesFromNotion()" style="margin-left:8px">Notionから業務内容を取得</button>
       <button class="btn editor-only" id="pay-export-btn" onclick="exportPayToSheets()">スプシで書き出す</button>
     `;
     el.innerHTML = renderCompensation();
@@ -1512,18 +1517,54 @@ function payInfoOf(name) {
   return {};
 }
 // 「先月分」を対象にする。稼働時間（lastMonthHours）が先月のものなので表示もそれに揃える。
+// ====== 対象月 ======
+// 既定は先月分（確定）。当月はまだ終わっていないので、見たいときだけ「予想」に切り替える。
+// 予想は Notion の「今月の稼働時間」を経過日数で割り戻した見込み稼働で計算する。
+// 稼働時間以外（360°評価・出席率・リファ・スクール・マネージャー・手動調整）は確定分と同じ値を使う。
+let payMode = "actual";
+function payIsForecast() { return payMode === "forecast"; }
+function setPayMode(m) { payMode = m; render(); }
 function payMonthLabel() {
   const d = new Date();
   d.setDate(1);
-  d.setMonth(d.getMonth() - 1);
+  if (!payIsForecast()) d.setMonth(d.getMonth() - 1);
   return `${d.getFullYear()}年${d.getMonth() + 1}月`;
+}
+// 月末までの伸び率。9月24日なら 30÷24＝1.25 倍。
+function payForecastFactor() {
+  const now = new Date();
+  const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  return days / Math.max(1, now.getDate());
+}
+// 対象月の稼働時間と、その内訳（プロジェクト別）。予想モードでは見込み値に引き伸ばす。
+function payHoursBreakdown(name) {
+  const mi = memberInfo(name) || {};
+  if (!payIsForecast()) {
+    return {
+      hours: typeof mi.lastMonthHours === "number" ? mi.lastMonthHours : null,
+      pjTotal: typeof mi.projectHoursTotal === "number" ? mi.projectHoursTotal : 0,
+      buckets: mi.projectHours || {},
+      actual: typeof mi.lastMonthHours === "number" ? mi.lastMonthHours : null,
+    };
+  }
+  const cur = typeof mi.currentMonthHours === "number" ? mi.currentMonthHours : null;
+  if (cur === null) return { hours: null, pjTotal: 0, buckets: {}, actual: null };
+  const f = payForecastFactor();
+  const r1 = v => Math.round(v * f * 10) / 10;
+  const buckets = {};
+  Object.entries(mi.currentProjectHours || {}).forEach(([k, v]) => { buckets[k] = r1(v); });
+  return {
+    hours: Math.round(cur * f * 2) / 2,
+    pjTotal: r1(typeof mi.currentProjectHoursTotal === "number" ? mi.currentProjectHoursTotal : 0),
+    buckets,
+    actual: cur,
+  };
 }
 
 // 最終金額を内訳付きで返す。内訳の合計がそのまま支給額になるようにしてある。
 function computePay(name) {
-  const mi = memberInfo(name) || {};
   const pi = payInfoOf(name);
-  const hours = typeof mi.lastMonthHours === "number" ? mi.lastMonthHours : null;
+  const hours = payHoursBreakdown(name).hours;
   const lines = [];
   if (hours === null) return { payable: false, reason: "稼働時間が未取得", hours, lines, total: 0 };
   if (hours < PAY_RULES.minPayableHours) {
@@ -1553,10 +1594,10 @@ function computePay(name) {
 // 支払額をプロジェクトと組織運営に按分する。
 // 各PJ按分 = 支払額 × そのPJの稼働 ÷ 総稼働。組織運営はその残り（端数がどこにも消えないように引き算で出す）。
 function payAllocation(name, total) {
-  const mi = memberInfo(name) || {};
-  const hours = typeof mi.lastMonthHours === "number" ? mi.lastMonthHours : 0;
-  const pjTotal = typeof mi.projectHoursTotal === "number" ? mi.projectHoursTotal : 0;
-  const buckets = mi.projectHours || {};
+  const hb = payHoursBreakdown(name);
+  const hours = typeof hb.hours === "number" ? hb.hours : 0;
+  const pjTotal = hb.pjTotal;
+  const buckets = hb.buckets;
   if (!hours || !total) return null;
   const rows = Object.entries(buckets)
     .sort((a, b) => b[1] - a[1])
@@ -1580,11 +1621,11 @@ function hasProjectWork(name) {
 // 認定の判断材料。条件を満たしていても自動では付けない。
 function managerEligible(name) {
   const pi = payInfoOf(name);
-  const mi = memberInfo(name) || {};
+  const hours = payHoursBreakdown(name).hours; // 表示中の月に合わせる
   const h = PAY_RULES.managerHint;
   return typeof pi.score360 === "number" && pi.score360 >= h.minScore
     && (!h.requiresReferral || !!pi.referral)
-    && typeof mi.lastMonthHours === "number" && mi.lastMonthHours >= h.minHours;
+    && typeof hours === "number" && hours >= h.minHours;
 }
 
 const openPayNames = new Set();
@@ -1685,6 +1726,7 @@ function renderCompensation() {
         支給対象 ${payable.length}名 ／ 対象外 ${unpayable.length}名
       </div>
       ${warn.length ? `<div class="warn" style="margin-bottom:8px">${warn.map(escapeHtml).join("／")}</div>` : ""}
+      ${payIsForecast() ? `<div class="warn" style="margin-bottom:8px">予想値です。${new Date().getMonth() + 1}月${new Date().getDate()}日時点の稼働を月末まで引き伸ばして（${payForecastFactor().toFixed(2)}倍）計算しています。稼働時間以外の項目と按分比率は確定分と同じ値を使っています。</div>` : ""}
       <div style="font-size:11px;color:var(--muted);line-height:1.8">
         基本給 ${yen(PAY_RULES.base)}／稼働 60h以上±0・50h台 ${yen(-10000)}・40h台 ${yen(-20000)}・40h未満は支給なし／
         出席率 ${PAY_RULES.attendanceMin}%未満 ${yen(PAY_RULES.attendancePenalty)}／
@@ -1721,7 +1763,7 @@ function renderCompensation() {
 function payMonthKey() {
   const d = new Date();
   d.setDate(1);
-  d.setMonth(d.getMonth() - 1);
+  if (!payIsForecast()) d.setMonth(d.getMonth() - 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 function payExportSheets() { return ((state.compensation || {}).exportSheets) || {}; }
@@ -1886,7 +1928,7 @@ async function exportPayToSheets() {
       },
       body: JSON.stringify({
         spreadsheetId: existing,
-        bookTitle: `RVSS報酬一覧 ${payMonthLabel()}分`,
+        bookTitle: `RVSS報酬一覧 ${payMonthLabel()}分${payIsForecast() ? "（予想）" : ""}`,
         shareWith: payExportShareTo().split(/[,、\s]+/).filter(Boolean),
         tabs: [
           { title: "報酬一覧", rows: buildPaySheetRows() },
