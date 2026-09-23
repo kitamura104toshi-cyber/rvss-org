@@ -1747,6 +1747,7 @@ function renderCompensation() {
           : "<span style='color:var(--pink-text)'>未設定</span>"}
         <span style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="setPayExportShareTo()">変更</span>
         <br>月ごとの報酬ブック（同じ月に再実行すると上書き）:
+        <span style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="setPayExportSheetId()">${payMonthLabel()}分のブックを指定</span>
         ${payExportLinksHTML()}
       </div>
     </div>
@@ -1775,6 +1776,33 @@ function payMonthKey() {
 }
 function payExportSheets() { return ((state.compensation || {}).exportSheets) || {}; }
 function payExportSheetId() { return payExportSheets()[payMonthKey()] || ""; }
+// サービスアカウントに新規作成の権限が無い場合の逃げ道。
+// 人が作って bot に共有したブックのURLを貼れば、そこへ書き出す。
+function setPayExportSheetId() {
+  inputDialog(
+    `${payMonthLabel()}分のブックのURL（bot に編集者で共有したもの）`,
+    payExportSheetId(),
+    v => {
+      const raw = String(v || "").trim();
+      if (!raw) {
+        if (state.compensation && state.compensation.exportSheets) delete state.compensation.exportSheets[payMonthKey()];
+        save(); render();
+        return;
+      }
+      const m = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+      const id = m ? m[1] : raw;
+      if (!/^[a-zA-Z0-9-_]{20,}$/.test(id)) {
+        setStatus("❌ スプレッドシートのURLかIDを貼ってください", "#b73a4a");
+        return;
+      }
+      if (!state.compensation) state.compensation = { members: {} };
+      if (!state.compensation.exportSheets) state.compensation.exportSheets = {};
+      state.compensation.exportSheets[payMonthKey()] = id;
+      save(); render();
+      setStatus(`✅ ${payMonthLabel()}分のブックを登録しました`, "#2f7d4a");
+    }
+  );
+}
 // 書き出した月のブックを新しい順に並べる。月を重ねるほどここに積み上がっていく。
 function payExportLinksHTML() {
   const sheets = payExportSheets();
