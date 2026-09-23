@@ -1234,9 +1234,10 @@ function renderContent() {
 }
 
 function renderProject(p, i) {
-  const cap = p.capacity || 2;
   // 学生欄とグループ内メンバーを合わせた実参加人数で枠を数える
   const filled = projectStudentNames(p).length;
+  // 枠が未設定のプロジェクトは、今いる人数をそのまま上限とみなす
+  const cap = typeof p.capacity === "number" && p.capacity > 0 ? p.capacity : filled;
   const groupBlocks = (p.groups||[]).map((g, gi) => `
     <div class="group-box">
       <div class="group-head">
@@ -1263,7 +1264,7 @@ function renderProject(p, i) {
       <div class="card-head">
         <div class="card-title">${escapeHtml(p.name)}</div>
         <div>
-          <span class="count-pill">${filled}/${cap}名</span>
+          <span class="count-pill" ${filled > cap ? 'style="background:var(--pink);color:var(--pink-text)" title="枠を超えています"' : ""}>${filled}/${cap}名</span>
           <button class="btn editor-only" onclick="editProject(${i})">編集</button>
         </div>
       </div>
