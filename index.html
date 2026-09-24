@@ -1553,11 +1553,16 @@ function payForecastFactor() {
 function payHoursBreakdown(name) {
   const mi = memberInfo(name) || {};
   if (!payIsForecast()) {
+    const last = typeof mi.lastMonthHours === "number" ? mi.lastMonthHours : null;
+    // 来月分は見込みなので、先月の実績とは別の欄に持つ。
+    // ここを lastMonthHours に混ぜると、確定済みの先月分まで動いてしまう。
+    const assumed = payIsNext() ? payInfoOf(name).nextMonthHours : undefined;
     return {
-      hours: typeof mi.lastMonthHours === "number" ? mi.lastMonthHours : null,
+      hours: typeof assumed === "number" ? assumed : last,
       pjTotal: typeof mi.projectHoursTotal === "number" ? mi.projectHoursTotal : 0,
       buckets: mi.projectHours || {},
-      actual: typeof mi.lastMonthHours === "number" ? mi.lastMonthHours : null,
+      actual: last,
+      assumed: typeof assumed === "number" ? assumed : null,
     };
   }
   const cur = typeof mi.currentMonthHours === "number" ? mi.currentMonthHours : null;
