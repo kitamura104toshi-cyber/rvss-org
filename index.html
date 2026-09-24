@@ -1993,23 +1993,22 @@ function paySectionRows(build, entries) {
 // ブックは月ごと。中身は8月・9月と同じ3タブ。
 // 来月分だけは、1シート目を有償枠、2シート目に全メンバーを置く。
 function payBookTabs() {
-  if (payIsNext()) {
-    return [
-      { title: "報酬一覧（有償枠）", index: 0, headerRowIndex: 1, rows: paySectionRows(buildPaySheetRows) },
-      {
-        title: "全メンバー", index: 1, headerRowIndex: 1,
-        rows: [
-          [`${payMonthLabel()}分 参考（全メンバー・${withPayMode("actual", payMonthLabel)}の稼働実績をもとにした概算）`],
-          ...buildPaySheetRows(payAllEntries(), 1),
-        ],
-      },
-    ];
-  }
-  return [
+  const tabs = [
     { title: "報酬一覧", index: 0, headerRowIndex: 1, rows: paySectionRows(buildPaySheetRows) },
     { title: "按分",     index: 1, headerRowIndex: 1, rows: [[paySectionTitle()], ...buildPayAllocationRows()] },
     { title: "業務内容", index: 2, headerRowIndex: 1, rows: [[paySectionTitle()], ...buildPayWorkRows()] },
   ];
+  // 来月分は報酬一覧が有償枠だけになるので、全員の顔ぶれも別タブに残す。
+  if (payIsNext()) {
+    tabs.push({
+      title: "全メンバー", index: 3, headerRowIndex: 1,
+      rows: [
+        [`${payMonthLabel()}分 参考（全メンバー・${withPayMode("actual", payMonthLabel)}の稼働実績をもとにした概算）`],
+        ...buildPaySheetRows(payAllEntries(), 1),
+      ],
+    });
+  }
+  return tabs;
 }
 
 function buildPayWorkRows() {
