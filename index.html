@@ -1216,7 +1216,7 @@ function renderContent() {
         return `<span class="tag" style="background:${on?'#2a2a2a':'#fff'};color:${on?'#fff':'#6b6b6b'};border:1px solid ${on?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${on?'font-weight:700':''}" onclick="setPayMode('${m}')">${label}</span>`;
       }).join("")}
       <button class="btn editor-only" id="pay-notion-btn" onclick="syncWorkNotesFromNotion()" style="margin-left:8px">Notionから業務内容を取得</button>
-      <button class="btn editor-only" id="pay-export-btn" onclick="exportPayToSheets()">スプシで書き出す</button>
+      <button class="btn editor-only" id="pay-export-btn" onclick="exportPayToSheets()">スプシを開く</button>
     `;
     el.innerHTML = renderCompensation();
   } else if (currentTab === "all") {
@@ -1747,8 +1747,8 @@ function renderCompensation() {
           ? escapeHtml(payExportShareTo())
           : "<span style='color:var(--pink-text)'>未設定</span>"}
         <span style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="setPayExportShareTo()">変更</span>
-        <br>月ごとの報酬ブック（同じ月に再実行すると上書き）:
-        <span style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="setPayExportSheetId()">${payMonthLabel()}分のブックを指定</span>
+        <br>報酬ブック:
+        <span style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="setPayExportSheetId()">ブックを指定</span>
         ${payExportLinksHTML()}
       </div>
     </div>
@@ -1775,18 +1775,16 @@ function payMonthKey() {
   if (!payIsForecast()) d.setMonth(d.getMonth() - 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
-function payExportSheets() { return ((state.compensation || {}).exportSheets) || {}; }
-function payExportSheetId() { return payExportSheets()[payMonthKey()] || ""; }
 // サービスアカウントに新規作成の権限が無い場合の逃げ道。
 // 人が作って bot に共有したブックのURLを貼れば、そこへ書き出す。
 function setPayExportSheetId() {
   inputDialog(
-    `${payMonthLabel()}分のブックのURL（bot に編集者で共有したもの）`,
-    payExportSheetId(),
+    "報酬ブックのURL（bot に編集者で共有したもの）",
+    payExportBookId(),
     v => {
       const raw = String(v || "").trim();
       if (!raw) {
-        if (state.compensation && state.compensation.exportSheets) delete state.compensation.exportSheets[payMonthKey()];
+        if (state.compensation) delete state.compensation.exportBookId;
         save(); render();
         return;
       }
@@ -1797,28 +1795,21 @@ function setPayExportSheetId() {
         return;
       }
       if (!state.compensation) state.compensation = { members: {} };
-      if (!state.compensation.exportSheets) state.compensation.exportSheets = {};
-      state.compensation.exportSheets[payMonthKey()] = id;
+      state.compensation.exportBookId = id;
       save(); render();
-      setStatus(`✅ ${payMonthLabel()}分のブックを登録しました`, "#2f7d4a");
+      setStatus("✅ 報酬ブックを登録しました", "#2f7d4a");
     }
   );
 }
 // 書き出した月のブックを新しい順に並べる。月を重ねるほどここに積み上がっていく。
+// 報酬ブックは1冊。中が「先月」「今月」「来月以降」の3タブに分かれている。
+function payExportBookId() { return (state.compensation || {}).exportBookId || ""; }
 function payExportLinksHTML() {
-  const sheets = payExportSheets();
-  const months = Object.keys(sheets).filter(k => sheets[k]).sort().reverse();
-  if (months.length === 0) return "未作成（「スプシで書き出す」で新規作成されます）";
-  const now = new Date();
-  const thisKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  return `<div style="display:grid;grid-template-columns:auto auto;gap:2px 14px;justify-content:start;margin-top:4px">${
-    months.map(k => {
-      const [y, m] = k.split("-");
-      const estimate = k >= thisKey ? "（推定）" : "";
-      return `<span>${Number(y)}年${Number(m)}月分${estimate}</span>` +
-        `<a href="https://docs.google.com/spreadsheets/d/${escapeHtml(sheets[k])}/edit" target="_blank" rel="noopener">開く</a>`;
-    }).join("")
-  }</div>`;
+  const id = payExportBookId();
+  if (!id) return "未作成（「スプシを開く」で新規作成されます）";
+  return `<a href="https://docs.google.com/spreadsheets/d/${escapeHtml(id)}/edit" target="_blank" rel="noopener">報酬ブックを開く</a>` +
+    `（先月／今月／来月以降の3タブ・最終金額は計算式）` +
+    `<span style="cursor:pointer;text-decoration:underline;margin-left:8px" onclick="rewritePayBook()">アプリの内容で書き直す</span>`;
 }
 function payExportShareTo() { return ((state.compensation || {}).exportShareTo) || ""; }
 function setPayExportShareTo() {
@@ -1859,34 +1850,63 @@ function payEntries() {
 }
 
 // 7月分の報酬シートと同じ3タブ構成で書き出す
-function buildPaySheetRows() {
+// 書き出したあとスプシ側で稼働時間や加算を直せるよう、最終金額は数値ではなく計算式で入れる。
+// 基本給も列として出す（隠れた定数があると、式の合計が何を足しているのか読めなくなるため）。
+// 列: A担当者 B最終金額 C稼働時間 D基本給 E稼働ペナ F出席率 G出席ペナ H360 I360加算
+//     Jスクール Kリファ Lマネ認定 Mマネ報酬 N手動調整 O理由 P業務内容
+function payRowFormula(rowNumber) {
+  return `=IF(N(C${rowNumber})<${PAY_RULES.minPayableHours},0,` +
+    `N(D${rowNumber})+N(E${rowNumber})+N(G${rowNumber})+N(I${rowNumber})+N(J${rowNumber})+N(M${rowNumber})+N(N${rowNumber}))`;
+}
+function buildPaySheetRows(entries) {
   const label = payMonthLabel();
-  const rows = [[
-    "担当者", "最終金額", "先月の稼働時間", "稼働時間ペナルティ", "土曜定例出席率", "出席率ペナルティ",
+  const header = [
+    "担当者", "最終金額", "稼働時間", "基本給", "稼働時間ペナルティ", "土曜定例出席率", "出席率ペナルティ",
     "360°評価", "360°評価加算額", "スクール受講加算", "リファ有無", "マネージャー認定", "マネージャー報酬",
     "手動調整", "手動調整の理由", `${label}の業務内容`,
-  ]];
-  for (const e of payEntries()) {
+  ];
+  const rows = [header];
+  for (const e of (entries || payEntries())) {
     const c = e.calc, pi = e.pi;
+    // 40時間未満でも各項目は埋めておく。稼働時間を直せばその場で金額が立ち上がる。
     rows.push([
       payExportName(e.name),
-      c.total,
+      payRowFormula(rows.length + 1),
       c.hours != null ? c.hours : "",
-      payLineAmount(c, "稼働時間ペナルティ") || "",
+      PAY_RULES.base,
+      payLineAmount(c, "稼働時間ペナルティ") || payHoursPenalty(c.hours),
       typeof pi.attendanceRate === "number" ? pi.attendanceRate / 100 : "",
-      payLineAmount(c, "出席率ペナルティ") || "",
+      payLineAmount(c, "出席率ペナルティ") || payAttendancePenalty(pi),
       typeof pi.score360 === "number" ? pi.score360 : "",
-      payLineAmount(c, "360°評価加算") || "",
-      payLineAmount(c, "スクール受講加算") || "",
+      payLineAmount(c, "360°評価加算") || payScoreBonus(pi),
+      payLineAmount(c, "スクール受講加算") || (pi.school ? PAY_RULES.schoolBonus : ""),
       pi.referral ? "有" : "",
       pi.isManager ? "〇" : "",
-      payLineAmount(c, "マネージャー報酬") || "",
-      payLineAmount(c, "手動調整") || "",
+      payLineAmount(c, "マネージャー報酬") || (pi.isManager ? PAY_RULES.managerPay : ""),
+      payLineAmount(c, "手動調整") || pi.adjust || "",
       pi.adjustNote || "",
       payWorkNote(e.name),
     ]);
   }
+  const last = rows.length;
+  rows.push(["合計", `=SUM(B2:B${last})`, `=SUM(C2:C${last})`, "", "", "", "", "", "", "", "", "", "", "", "", ""]);
   return rows;
+}
+// 支給対象外の行にも内訳を出すための、computePay と同じ判定。
+function payHoursPenalty(hours) {
+  if (typeof hours !== "number") return "";
+  const hp = PAY_RULES.hoursPenalties.find(p => hours >= p.min);
+  return hp && hp.amount ? hp.amount : "";
+}
+function payAttendancePenalty(pi) {
+  const att = typeof pi.attendanceRate === "number" ? pi.attendanceRate : null;
+  return (att === null || att < PAY_RULES.attendanceMin) ? PAY_RULES.attendancePenalty : "";
+}
+function payScoreBonus(pi) {
+  const s = typeof pi.score360 === "number" ? pi.score360 : null;
+  if (s === null) return "";
+  const band = PAY_RULES.scoreBands.find(b => s >= b.min);
+  return band ? band.amount : "";
 }
 
 // 按分タブ。プロジェクト列はNotionに存在するものから自動で決まるので、
@@ -1915,14 +1935,50 @@ function buildPayAllocationRows() {
   return rows;
 }
 
-// ====== 月ごとの書き出し ======
-// ブックは月ごとに分ける。アプリ側には月とリンクの一覧が積み上がっていく。
-// 各ブックの1行目は「2026年9月分給与の推定」のような見出しで、その下がいつもの表。
+// ====== 書き出し ======
+// 1冊のブックに「先月」「今月」「来月以降」の3タブ。各タブの1行目は何の数字かの見出しで、
+// その下がいつもの表。最終金額と合計は計算式なので、書き出したあとスプシ側で直せる。
+function withPayMode(m, fn) {
+  const prev = payMode;
+  payMode = m;
+  try { return fn(); } finally { payMode = prev; }
+}
 function paySectionTitle() {
   return `${payMonthLabel()}分給与${payIsForecast() ? "の推定" : ""}`;
 }
-function paySectionRows(build) {
-  return [[paySectionTitle()], ...build()];
+// 10月は有償枠の顔ぶれがほぼ固まる見込みなので、有償枠タブのメンバーだけを対象にする。
+// 稼働時間は直近で確定している先月の実績をそのまま置き、そこから先は手で直してもらう。
+function payNextMonthEntries() {
+  const paid = new Set();
+  (state.paidGroups || []).forEach(g => (g.members || []).forEach(m => paid.add(slotNameKey(m.name))));
+  return payEntries().filter(e => paid.has(slotNameKey(e.name)));
+}
+function payBookTabs() {
+  const lastTitle = withPayMode("actual", paySectionTitle);
+  const thisTitle = withPayMode("forecast", paySectionTitle);
+  const nextLabel = (() => {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + 1);
+    return `${d.getFullYear()}年${d.getMonth() + 1}月`;
+  })();
+  return [
+    {
+      title: "先月", index: 0, headerRowIndex: 1,
+      rows: [[lastTitle], ...withPayMode("actual", () => buildPaySheetRows())],
+    },
+    {
+      title: "今月", index: 1, headerRowIndex: 1,
+      rows: [[thisTitle], ...withPayMode("forecast", () => buildPaySheetRows())],
+    },
+    {
+      title: "来月以降", index: 2, headerRowIndex: 1,
+      rows: [
+        [`${nextLabel}分 参考金額（有償枠のみ・${withPayMode("actual", payMonthLabel)}の稼働実績をもとにした概算）`],
+        ...withPayMode("actual", () => buildPaySheetRows(payNextMonthEntries())),
+      ],
+    },
+  ];
 }
 
 function buildPayWorkRows() {
@@ -1973,13 +2029,30 @@ async function runWorkNotesSync() {
     restore();
   }
 }
+// 2回目以降は開くだけ。スプシ側で直した金額を、押し間違いで消さないため。
+// 書き直したいときは「アプリの内容で書き直す」から。
 async function exportPayToSheets() {
+  const id = payExportBookId();
+  if (id) {
+    window.open(`https://docs.google.com/spreadsheets/d/${id}/edit`, "_blank", "noopener");
+    setStatus("✅ 既存のブックを開きました（上書きしていません）", "#2f7d4a");
+    return;
+  }
+  await writePayBook();
+}
+function rewritePayBook() {
+  confirmDialog(
+    "スプレッドシート側で直した内容は失われます。アプリの数字で書き直しますか？",
+    () => writePayBook()
+  );
+}
+async function writePayBook() {
   if (!payExportShareTo()) { setPayExportShareTo(); return; }
   const btn = document.getElementById("pay-export-btn");
-  const restore = () => { if (btn) { btn.disabled = false; btn.textContent = "スプシで書き出す"; } };
+  const restore = () => { if (btn) { btn.disabled = false; btn.textContent = "スプシを開く"; } };
   if (btn) { btn.disabled = true; btn.textContent = "書き出し中…"; }
-  const existing = payExportSheetId();
-  setStatus(existing ? "⏳ 書き出し中…" : `⏳ ${payMonthLabel()}分のブックを作成中…`);
+  const existing = payExportBookId();
+  setStatus(existing ? "⏳ 書き出し中…" : "⏳ ブックを作成中…");
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/sheets-pay-export`, {
       method: "POST",
@@ -1990,31 +2063,24 @@ async function exportPayToSheets() {
       },
       body: JSON.stringify({
         spreadsheetId: existing,
-        bookTitle: `RVSS報酬一覧 ${paySectionTitle()}`,
+        bookTitle: "RVSS報酬一覧",
         shareWith: payExportShareTo().split(/[,、\s]+/).filter(Boolean),
-        // 見出し行を挟むので、書式に使うヘッダーは2行目（0始まりで1）にある
-        tabs: [
-          { title: "報酬一覧", rows: paySectionRows(buildPaySheetRows), headerRowIndex: 1 },
-          { title: "按分",     rows: paySectionRows(buildPayAllocationRows), headerRowIndex: 1 },
-          { title: "業務内容", rows: paySectionRows(buildPayWorkRows), headerRowIndex: 1 },
-        ],
+        valueInputOption: "USER_ENTERED", // = で始まるセルを計算式として入れる
+        keepOtherSheets: false,           // 空シートを残さず、1シート目から3タブにする
+        tabs: payBookTabs(),
       }),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    if (data.url) window.open(data.url, "_blank", "noopener");
-    if (data.created && data.spreadsheetId) {
+    if (data.spreadsheetId) {
       if (!state.compensation) state.compensation = { members: {} };
-      if (!state.compensation.exportSheets) state.compensation.exportSheets = {};
-      state.compensation.exportSheets[payMonthKey()] = data.spreadsheetId;
+      state.compensation.exportBookId = data.spreadsheetId;
       save();
     }
+    if (data.url) window.open(data.url, "_blank", "noopener");
     render();
     const tabs = (data.written || []).map(w => w.title).join("・");
-    setStatus(
-      `✅ ${data.created ? "新しいブックを作成しました" : "上書きしました"}（${tabs}）`,
-      "#2f7d4a"
-    );
+    setStatus(`✅ 書き出しました（${tabs}）`, "#2f7d4a");
   } catch (e) {
     setStatus("❌ 書き出し失敗: " + e.message, "#b73a4a");
   } finally {
