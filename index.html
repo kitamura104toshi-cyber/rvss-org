@@ -1858,7 +1858,10 @@ function payRowFormula(rowNumber) {
   return `=IF(N(C${rowNumber})<${PAY_RULES.minPayableHours},0,` +
     `N(D${rowNumber})+N(E${rowNumber})+N(G${rowNumber})+N(I${rowNumber})+N(J${rowNumber})+N(M${rowNumber})+N(N${rowNumber}))`;
 }
-function buildPaySheetRows(entries) {
+// offset は、この表の上にさらに何行置かれるか（見出し行のぶん）。
+// 計算式は書き出し後のセル位置を指すので、ここを間違えると1行ずれた値を足してしまう。
+function buildPaySheetRows(entries, offset) {
+  const above = offset || 0;
   const label = payMonthLabel();
   const header = [
     "担当者", "最終金額", "稼働時間", "基本給", "稼働時間ペナルティ", "土曜定例出席率", "出席率ペナルティ",
@@ -1871,7 +1874,7 @@ function buildPaySheetRows(entries) {
     // 40時間未満でも各項目は埋めておく。稼働時間を直せばその場で金額が立ち上がる。
     rows.push([
       payExportName(e.name),
-      payRowFormula(rows.length + 1),
+      payRowFormula(rows.length + 1 + above),
       c.hours != null ? c.hours : "",
       PAY_RULES.base,
       payLineAmount(c, "稼働時間ペナルティ") || payHoursPenalty(c.hours),
@@ -1888,8 +1891,8 @@ function buildPaySheetRows(entries) {
       payWorkNote(e.name),
     ]);
   }
-  const last = rows.length;
-  rows.push(["合計", `=SUM(B2:B${last})`, `=SUM(C2:C${last})`, "", "", "", "", "", "", "", "", "", "", "", "", ""]);
+  const first = 2 + above, last = rows.length + above;
+  rows.push(["合計", `=SUM(B${first}:B${last})`, `=SUM(C${first}:C${last})`, "", "", "", "", "", "", "", "", "", "", "", "", ""]);
   return rows;
 }
 // 支給対象外の行にも内訳を出すための、computePay と同じ判定。
@@ -1965,17 +1968,17 @@ function payBookTabs() {
   return [
     {
       title: "先月", index: 0, headerRowIndex: 1,
-      rows: [[lastTitle], ...withPayMode("actual", () => buildPaySheetRows())],
+      rows: [[lastTitle], ...withPayMode("actual", () => buildPaySheetRows(null, 1))],
     },
     {
       title: "今月", index: 1, headerRowIndex: 1,
-      rows: [[thisTitle], ...withPayMode("forecast", () => buildPaySheetRows())],
+      rows: [[thisTitle], ...withPayMode("forecast", () => buildPaySheetRows(null, 1))],
     },
     {
       title: "来月以降", index: 2, headerRowIndex: 1,
       rows: [
         [`${nextLabel}分 参考金額（有償枠のみ・${withPayMode("actual", payMonthLabel)}の稼働実績をもとにした概算）`],
-        ...withPayMode("actual", () => buildPaySheetRows(payNextMonthEntries())),
+        ...withPayMode("actual", () => buildPaySheetRows(payNextMonthEntries(), 1)),
       ],
     },
   ];
