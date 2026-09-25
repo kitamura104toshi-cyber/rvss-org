@@ -1519,10 +1519,15 @@ const PAY_RULES = {
 function yen(n) {
   return (n < 0 ? "-" : "") + "¥" + Math.abs(Math.round(n)).toLocaleString("ja-JP");
 }
+// 報酬の入力値。基本はメンバー単位だが、月によって変わるもの（リファ成立やマネージャー認定）は
+// byMonth["YYYY-MM"] に置いて、その月だけ上書きする。
 function payInfoOf(name) {
   const m = ((state.compensation || {}).members) || {};
-  for (const k of [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")]) if (m[k]) return m[k];
-  return {};
+  let base = null;
+  for (const k of [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")]) if (m[k]) { base = m[k]; break; }
+  if (!base) return {};
+  const perMonth = (base.byMonth || {})[payMonthKey()];
+  return perMonth ? { ...base, ...perMonth } : base;
 }
 // 「先月分」を対象にする。稼働時間（lastMonthHours）が先月のものなので表示もそれに揃える。
 // ====== 対象月 ======
@@ -1966,16 +1971,19 @@ const PROJECT_BILLING_RATE = 1.5;
 // 按分タブ。1人ずつの按分と請求額、そのあとにプロジェクト別の集計と、
 // プロジェクト／組織運営の比率を置く。請求額と収益は計算式なので、按分を直せば追随する。
 // offset は表の上に置かれる行数（見出し行のぶん）。
-function buildPayAllocationRows(_entries, offset) {
+function buildPayAllocationRows(_entries, offset, payTotalRow) {
   const above = offset || 0;
   const label = payMonthLabel();
+  // 支払総額は報酬一覧タブの合計を参照する。この按分タブにはプロジェクト関与者しか
+  // 並ばないので、ここの小計を支払総額として扱うと損益が実態より小さく出てしまう。
+  const payTotalRef = payTotalRow ? `='報酬一覧'!B${payTotalRow}` : 0;
   const withPj = payEntries().filter(e => e.calc.payable)
     .map(e => ({ ...e, alloc: payAllocation(e.name, e.calc.total) }))
     .filter(e => e.alloc && e.alloc.rows.length > 0);
   const projects = Array.from(new Set(withPj.flatMap(e => e.alloc.rows.map(r => r.name)))).sort();
 
   const rows = [[
-    "担当者", "支払額", "PJ按分", "請求額（PJ按分×1.5）", "収益", "組織運営按分",
+    "担当者", "支払額", "PJ按分", "売上（PJ按分×1.5）", "収益", "組織運営按分",
     "プロジェクト稼働時間", "組織運営稼働時間", `${label}合計`, ...projects,
   ]];
   const byProject = {};   // プロジェクト名 -> { amount, hours, people }
@@ -2004,9 +2012,9 @@ function buildPayAllocationRows(_entries, offset) {
 
   // ここからプロジェクト別。1人の按分を複数PJに割ったものを、PJ側で足し直す。
   rows.push([]);
-  rows.push([`${label}分 プロジェクト別の請求`]);
+  rows.push([`${label}分 プロジェクト別の売上`]);
   const pjHeader = rows.length + 1 + above;
-  rows.push(["プロジェクト", "人数", "PJ按分", "請求額（×1.5）", "収益", "稼働時間"]);
+  rows.push(["プロジェクト", "人数", "PJ按分", "売上（×1.5）", "収益", "稼働時間"]);
   projects.forEach(p => {
     const v = byProject[p];
     const r = rows.length + 1 + above;
@@ -2024,14 +2032,15 @@ function buildPayAllocationRows(_entries, offset) {
   rows.push([`${label}分 損益とプロジェクト比率`]);
   rows.push(["項目", "金額"]);
   const kpiFirst = rows.length + 1 + above;
-  rows.push(["支払報酬の合計", `=B${memberTotalRow}`]);
+  // 分母は支払総額（報酬一覧の合計）。この表に並ぶのはプロジェクト関与者だけなので、
+  // 比率も損益も、全体の支払に対して出さないと意味が変わってしまう。
+  rows.push(["支払報酬の合計（報酬一覧より）", payTotalRef]);
   rows.push(["うちプロジェクト按分", `=C${memberTotalRow}`]);
-  rows.push(["うち組織運営按分", `=F${memberTotalRow}`]);
-  rows.push(["プロジェクトへの請求額", `=D${pjTotalRow}`]);
-  rows.push(["収益（請求額−プロジェクト按分）", `=E${pjTotalRow}`]);
-  rows.push(["損益（請求額−支払報酬の合計）", `=B${kpiFirst + 3}-B${kpiFirst}`]);
-  rows.push(["プロジェクト比率", `=IF(B${kpiFirst}=0,0,B${kpiFirst + 1}/B${kpiFirst})`]);
-  rows.push(["組織運営比率", `=IF(B${kpiFirst}=0,0,B${kpiFirst + 2}/B${kpiFirst})`]);
+  rows.push(["プロジェクト売上（按分×1.5）", `=D${pjTotalRow}`]);
+  rows.push(["収益（売上−プロジェクト按分）", `=E${pjTotalRow}`]);
+  rows.push(["損益（売上−支払報酬の合計）", `=B${kpiFirst + 2}-B${kpiFirst}`]);
+  rows.push(["プロジェクト比率（按分÷支払総額）", `=IF(B${kpiFirst}=0,0,B${kpiFirst + 1}/B${kpiFirst})`]);
+  rows.push(["組織運営比率", `=IF(B${kpiFirst}=0,0,(B${kpiFirst}-B${kpiFirst + 1})/B${kpiFirst})`]);
   return rows;
 }
 
@@ -2053,9 +2062,12 @@ function paySectionRows(build, entries) {
 // ブックは月ごと。中身は8月・9月と同じ3タブ。
 // 来月分だけは、1シート目を有償枠、2シート目に全メンバーを置く。
 function payBookTabs() {
+  const payRows = paySectionRows(buildPaySheetRows);
+  const payTotalRow = payRows.length; // 報酬一覧の合計行（見出し込みの行番号）
   const tabs = [
-    { title: "報酬一覧", index: 0, headerRowIndex: 1, rows: paySectionRows(buildPaySheetRows) },
-    { title: "按分",     index: 1, headerRowIndex: 1, rows: paySectionRows(buildPayAllocationRows) },
+    { title: "報酬一覧", index: 0, headerRowIndex: 1, rows: payRows },
+    { title: "按分",     index: 1, headerRowIndex: 1,
+      rows: [[paySectionTitle()], ...buildPayAllocationRows(null, 1, payTotalRow)] },
     { title: "業務内容", index: 2, headerRowIndex: 1, rows: [[paySectionTitle()], ...buildPayWorkRows()] },
   ];
   // 来月分は報酬一覧が有償枠だけになるので、全員の顔ぶれも別タブに残す。
