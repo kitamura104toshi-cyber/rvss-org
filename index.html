@@ -1681,11 +1681,9 @@ function togglePayDetail(name) {
 }
 
 function renderCompensation() {
-  const map = buildMemberMap();
-  const rows = Object.keys(map)
-    .filter(n => !isBSMember(n))
-    .map(n => ({ name: n, calc: computePay(n), pi: payInfoOf(n) }))
-    .sort((a, b) => (b.calc.hours || 0) - (a.calc.hours || 0));
+  // 書き出しと同じ一覧を使う。ここだけ別に組むと、来月分の絞り込み（有償枠のみ）が
+  // 画面に効かず、スプシと人数も金額も食い違う。
+  const rows = payEntries();
   const payable = rows.filter(r => r.calc.payable);
   const unpayable = rows.filter(r => !r.calc.payable);
   const total = payable.reduce((s, r) => s + r.calc.total, 0);
