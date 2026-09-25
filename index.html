@@ -1320,7 +1320,7 @@ function concurrentTagsHTML(name) {
   const tags = [];
   uniq(info.depts).forEach(d => tags.push(`<span class="tag">${escapeHtml(d)}</span>`));
   uniq(info.pjs).forEach(pj => tags.push(`<span class="tag pj">${escapeHtml(pj)}</span>`));
-  uniq(info.schools).forEach(sc => tags.push(`<span class="tag" style="background:var(--purple);color:var(--purple-text)">${escapeHtml(sc)}スクール</span>`));
+  // スクール受講は有償枠の区分と関係がないので、この一覧には出さない
   return tags.length
     ? `<div class="concurrent">${tags.join("")}</div>`
     : `<div class="concurrent"><span class="tag" style="background:#f0eee7;color:#6b6b6b">所属なし</span></div>`;
