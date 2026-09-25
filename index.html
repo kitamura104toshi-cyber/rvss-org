@@ -1643,18 +1643,26 @@ function payAllocation(name, total) {
   const pjTotal = hb.pjTotal;
   const buckets = hb.buckets;
   if (!hours || !total) return null;
+  // プロジェクト分は「プロジェクト稼働時間」で決まる。どのPJに乗せるかの内訳が
+  // 未入力でも、按分そのものは成立する（内訳待ちの分は unassigned に残る）。
+  const pjAmount = Math.round(total * Math.min(pjTotal, hours) / hours);
+  const bucketHours = Object.values(buckets).reduce((s, v) => s + v, 0);
   const rows = Object.entries(buckets)
     .sort((a, b) => b[1] - a[1])
-    .map(([pj, h]) => ({ name: pj, hours: h, amount: Math.round(total * h / hours) }));
-  const pjAmount = rows.reduce((s, r) => s + r.amount, 0);
+    .map(([pj, h]) => ({ name: pj, hours: h, amount: Math.round(pjAmount * h / (bucketHours || 1)) }));
   return {
     rows, pjAmount,
     orgHours: Math.round((hours - pjTotal) * 10) / 10,
     orgAmount: total - pjAmount,
+    unassigned: pjAmount - rows.reduce((s, r) => s + r.amount, 0),
     hours, pjTotal,
   };
 }
+// 表示中の月のプロジェクト稼働で判定する。来月分は見込みの稼働を入れた時点で
+// プロジェクト側の人数に数える（アプリ上のアサインがまだでも、按分表には載るため）。
 function hasProjectWork(name) {
+  const hb = payHoursBreakdown(name);
+  if (hb.pjTotal > 0) return true;
   const mi = memberInfo(name) || {};
   if (typeof mi.projectHoursTotal === "number") return mi.projectHoursTotal > 0;
   // Notion連携前のフォールバック：アプリ上のプロジェクト所属で判定する
@@ -1765,9 +1773,8 @@ function renderCompensation() {
   const profit = billingTotal - total;
   // 比率は「何：何」で。組織運営側は支払総額からプロジェクト按分を引いた残り。
   const orgAllocTotal = total - pjAllocTotal;
-  const ratioMoney = total
-    ? `${Math.round(pjAllocTotal / total * 100)}：${Math.round(orgAllocTotal / total * 100)}`
-    : "—";
+  // 百分率だと人数と見間違うので、按分した金額どうしを並べる
+  const ratioMoney = total ? `${yen(pjAllocTotal)}：${yen(orgAllocTotal)}` : "—";
   const pjPeople = payable.filter(r => hasProjectWork(r.name)).length;
   const ratioPeople = payable.length ? `${pjPeople}：${payable.length - pjPeople}` : "—";
 
@@ -2011,7 +2018,7 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
   const payTotalRef = payTotalRow ? `='報酬一覧'!B${payTotalRow}` : 0;
   const withPj = payEntries().filter(e => e.calc.payable)
     .map(e => ({ ...e, alloc: payAllocation(e.name, e.calc.total) }))
-    .filter(e => e.alloc && e.alloc.rows.length > 0);
+    .filter(e => e.alloc && e.alloc.pjTotal > 0);   // 内訳未入力でもPJ稼働があれば載せる
   const projects = Array.from(new Set(withPj.flatMap(e => e.alloc.rows.map(r => r.name)))).sort();
 
   const rows = [[
@@ -2035,39 +2042,10 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
   rows.push(["合計", sum("B"), sum("C"), sum("D"), sum("E"), sum("F"), sum("G"), sum("H"), sum("I"),
     ...projects.map((_, i) => sum(String.fromCharCode(74 + i)))]);
 
-  // ここからプロジェクト別。1人の按分を複数PJに割ったものを、PJ側で足し直す。
-  // 固定値ではなく上の表を参照する式にしてあるので、按分や稼働時間を直せばここも動く。
-  // 1人の按分 C を、その人のプロジェクト稼働 G に対する各PJの時間の割合で分ける。
-  const colLetter = i => {
-    let n = i, s = "";
-    do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
-    return s;
-  };
+  // 売上は「プロジェクト按分の合計 × 1.5」。プロジェクト別の内訳表からではなく
+  // 上の表の合計から直接出す（内訳が未入力の人がいても売上が欠けないようにするため）。
   const memberFirst = first, memberLast = first + withPj.length - 1;
-  rows.push([]);
-  rows.push([`${label}分 プロジェクト別の売上`]);
-  const pjHeader = rows.length + 1 + above;
-  rows.push(["プロジェクト", "人数", "PJ按分", "売上（×1.5）", "収益", "稼働時間"]);
-  projects.forEach((p, pi) => {
-    const col = colLetter(9 + pi);   // プロジェクト列はJ列から
-    const span = `${col}$${memberFirst}:${col}$${memberLast}`;
-    const r = rows.length + 1 + above;
-    rows.push([
-      p,
-      `=COUNTIF(${span},">0")`,
-      `=SUMPRODUCT($C$${memberFirst}:$C$${memberLast},${span},1/IF($G$${memberFirst}:$G$${memberLast}=0,1,$G$${memberFirst}:$G$${memberLast}))`,
-      `=C${r}*${PROJECT_BILLING_RATE}`,
-      `=D${r}-C${r}`,
-      `=SUM(${span})`,
-    ]);
-  });
-  const pjFirst = pjHeader + 1, pjLast = rows.length + above;
-  rows.push(["合計", `=SUM(B${pjFirst}:B${pjLast})`, `=SUM(C${pjFirst}:C${pjLast})`,
-    `=SUM(D${pjFirst}:D${pjLast})`, `=SUM(E${pjFirst}:E${pjLast})`, `=SUM(F${pjFirst}:F${pjLast})`]);
-  const pjTotalRow = rows.length + above;
-
-  // 支払（コスト）と請求（売上）の差し引き、そしてプロジェクトと組織運営の比率
-  const memberTotalRow = first - 1 + withPj.length + 1;
+  const memberTotalRow = memberLast + 1;
   rows.push([]);
   rows.push([`${label}分 損益とプロジェクト比率`]);
   rows.push(["項目", "金額"]);
@@ -2076,17 +2054,17 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
   // 比率も損益も、全体の支払に対して出さないと意味が変わってしまう。
   rows.push(["支払報酬の合計（報酬一覧より）", payTotalRef]);
   rows.push(["うちプロジェクト按分", `=C${memberTotalRow}`]);
-  rows.push(["プロジェクト売上（按分×1.5）", `=D${pjTotalRow}`]);
-  rows.push(["収益（売上−プロジェクト按分）", `=E${pjTotalRow}`]);
-  rows.push(["損益（売上−支払報酬の合計）", `=B${kpiFirst + 2}-B${kpiFirst}`]);
-  // 比率は金額と人数の両方を「何：何」で出す。
-  // 組織運営側は、支払総額からプロジェクト按分を引いた残り（関与していない人の分も含む）。
   rows.push(["組織運営按分（支払総額−プロジェクト按分）", `=B${kpiFirst}-B${kpiFirst + 1}`]);
+  rows.push([`プロジェクト売上（按分×${PROJECT_BILLING_RATE}）`, `=B${kpiFirst + 1}*${PROJECT_BILLING_RATE}`]);
+  rows.push(["収益（売上−プロジェクト按分）", `=B${kpiFirst + 3}-B${kpiFirst + 1}`]);
+  rows.push(["損益（売上−支払報酬の合計）", `=B${kpiFirst + 3}-B${kpiFirst}`]);
   const peopleRow = kpiFirst + 6;
   rows.push(["プロジェクト関与の人数", `=COUNTA(A${memberFirst}:A${memberLast})`]);
-  rows.push(["組織運営のみの人数", `=COUNTIF('報酬一覧'!B${2 + above}:B${payTotalRow ? payTotalRow - 1 : 2 + above},">0")-B${peopleRow}`]);
+  rows.push(["組織運営のみの人数",
+    `=COUNTIF('報酬一覧'!B${2 + above}:B${payTotalRow ? payTotalRow - 1 : 2 + above},">0")-B${peopleRow}`]);
+  // 比率は「何：何」。金額は百分率に直さず、按分した金額どうしで並べる。
   rows.push(["金額比率（プロジェクト：組織運営）",
-    `=IF(B${kpiFirst}=0,"—",ROUND(B${kpiFirst + 1}/B${kpiFirst}*100)&"："&ROUND(B${kpiFirst + 5}/B${kpiFirst}*100))`]);
+    `=TEXT(B${kpiFirst + 1},"#,##0")&"："&TEXT(B${kpiFirst + 2},"#,##0")`]);
   rows.push(["人数比率（プロジェクト：組織運営）",
     `=IF(B${peopleRow}+B${peopleRow + 1}=0,"—",B${peopleRow}&"："&B${peopleRow + 1})`]);
   return rows;
