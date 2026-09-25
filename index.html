@@ -2004,17 +2004,10 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
     "担当者", "支払額", "PJ按分", "売上（PJ按分×1.5）", "収益", "組織運営按分",
     "プロジェクト稼働時間", "組織運営稼働時間", `${label}合計`, ...projects,
   ]];
-  const byProject = {};   // プロジェクト名 -> { amount, hours, people }
-  projects.forEach(p => { byProject[p] = { amount: 0, hours: 0, people: 0 }; });
 
   for (const e of withPj) {
     const a = e.alloc;
     const hoursByPj = Object.fromEntries(a.rows.map(r => [r.name, r.hours]));
-    a.rows.forEach(r => {
-      byProject[r.name].amount += r.amount;
-      byProject[r.name].hours += r.hours;
-      byProject[r.name].people += 1;
-    });
     const r = rows.length + 1 + above;   // 書き出し後の行番号
     rows.push([
       payExportName(e.name), e.calc.total, a.pjAmount,
@@ -2029,15 +2022,30 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
     ...projects.map((_, i) => sum(String.fromCharCode(74 + i)))]);
 
   // ここからプロジェクト別。1人の按分を複数PJに割ったものを、PJ側で足し直す。
+  // 固定値ではなく上の表を参照する式にしてあるので、按分や稼働時間を直せばここも動く。
+  // 1人の按分 C を、その人のプロジェクト稼働 G に対する各PJの時間の割合で分ける。
+  const colLetter = i => {
+    let n = i, s = "";
+    do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
+    return s;
+  };
+  const memberFirst = first, memberLast = first + withPj.length - 1;
   rows.push([]);
   rows.push([`${label}分 プロジェクト別の売上`]);
   const pjHeader = rows.length + 1 + above;
   rows.push(["プロジェクト", "人数", "PJ按分", "売上（×1.5）", "収益", "稼働時間"]);
-  projects.forEach(p => {
-    const v = byProject[p];
+  projects.forEach((p, pi) => {
+    const col = colLetter(9 + pi);   // プロジェクト列はJ列から
+    const span = `${col}$${memberFirst}:${col}$${memberLast}`;
     const r = rows.length + 1 + above;
-    rows.push([p, v.people, Math.round(v.amount), `=C${r}*${PROJECT_BILLING_RATE}`, `=D${r}-C${r}`,
-      Math.round(v.hours * 10) / 10]);
+    rows.push([
+      p,
+      `=COUNTIF(${span},">0")`,
+      `=SUMPRODUCT($C$${memberFirst}:$C$${memberLast},${span},1/IF($G$${memberFirst}:$G$${memberLast}=0,1,$G$${memberFirst}:$G$${memberLast}))`,
+      `=C${r}*${PROJECT_BILLING_RATE}`,
+      `=D${r}-C${r}`,
+      `=SUM(${span})`,
+    ]);
   });
   const pjFirst = pjHeader + 1, pjLast = rows.length + above;
   rows.push(["合計", `=SUM(B${pjFirst}:B${pjLast})`, `=SUM(C${pjFirst}:C${pjLast})`,
