@@ -1569,11 +1569,16 @@ function payHoursBreakdown(name) {
     const last = typeof mi.lastMonthHours === "number" ? mi.lastMonthHours : null;
     // 来月分は見込みなので、先月の実績とは別の欄に持つ。
     // ここを lastMonthHours に混ぜると、確定済みの先月分まで動いてしまう。
-    const assumed = payIsNext() ? payInfoOf(name).nextMonthHours : undefined;
+    const pi = payIsNext() ? payInfoOf(name) : {};
+    const assumed = payIsNext() ? pi.nextMonthHours : undefined;
+    // プロジェクト別の見込みも、スプシで組み直したものがあればそちらを使う
+    const nextBuckets = payIsNext() && pi.nextProjectHours ? pi.nextProjectHours : null;
     return {
       hours: typeof assumed === "number" ? assumed : last,
-      pjTotal: typeof mi.projectHoursTotal === "number" ? mi.projectHoursTotal : 0,
-      buckets: mi.projectHours || {},
+      pjTotal: nextBuckets
+        ? (typeof pi.nextProjectHoursTotal === "number" ? pi.nextProjectHoursTotal : 0)
+        : (typeof mi.projectHoursTotal === "number" ? mi.projectHoursTotal : 0),
+      buckets: nextBuckets || mi.projectHours || {},
       actual: last,
       assumed: typeof assumed === "number" ? assumed : null,
     };
