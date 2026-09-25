@@ -346,6 +346,7 @@
 
   /* ===== 有償枠 ===== */
   .paid-card { border-top: 4px solid var(--accent); }
+  .paid-card.組織 { border-top-color: #6b5bd2; }
   .paid-card.専任 { border-top-color: #2f7d4a; }
   .paid-card.兼任 { border-top-color: #4f63d2; }
   .paid-card.移行 { border-top-color: #a8631b; }
@@ -881,7 +882,14 @@ function pushToSupabase() {
 const STORAGE_KEY = "rvss-org-v1";
 
 // 有償枠の大枠。この4つ以外は作らない想定なので、タブ側で順序ごと固定する
-const PAID_CATEGORIES = ["組織運営（兼任）", "プロジェクト専任", "プロジェクト兼任", "プロジェクト移行"];
+const PAID_CATEGORIES = ["組織運営専任", "組織運営・プロジェクト兼任", "プロジェクト専任", "プロジェクト移行（移行中／接続中）"];
+// カードの上辺の色。区分名に「専任」「兼任」が両方入りうるので、名前で直接引く。
+const PAID_CARD_CLASS = {
+  "組織運営専任": "組織",
+  "組織運営・プロジェクト兼任": "兼任",
+  "プロジェクト専任": "専任",
+  "プロジェクト移行（移行中／接続中）": "移行",
+};
 
 let state = load();
 
@@ -1443,7 +1451,7 @@ function renderTransition() {
 function renderPaid() {
   const total = (state.paidGroups || []).reduce((n, g) => n + (g.members || []).length, 0);
   const cards = (state.paidGroups || []).map((g, gi) => {
-    const cls = g.name.includes("専任") ? "専任" : g.name.includes("移行") ? "移行" : "兼任";
+    const cls = PAID_CARD_CLASS[g.name] || (g.name.includes("移行") ? "移行" : g.name.includes("兼任") ? "兼任" : "専任");
     const rows = (g.members || []).map((m, mi) => `
       <div class="slot" ${reorderData({ type: "paidGroupMembers", gi }, mi)}>
         <div style="min-width:0">
