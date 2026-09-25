@@ -1696,8 +1696,9 @@ function renderCompensation() {
     const alloc = payAllocation(r.name, r.calc.total);
     const allocHTML = alloc && alloc.rows.length ? `
       <div class="pay-line" style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border);color:var(--muted);font-size:11px"><span>按分</span><span>稼働 ${alloc.hours}h</span></div>
-      ${alloc.rows.map(a => `<div class="pay-line"><span>${escapeHtml(a.name)}（${a.hours}h）</span><span>${yen(a.amount)}</span></div>`).join("")}
-      <div class="pay-line"><span>組織運営（${alloc.orgHours}h）</span><span>${yen(alloc.orgAmount)}</span></div>` : "";
+      ${alloc.rows.map(a => `<div class="pay-line"><span>${escapeHtml(a.name)}（${a.hours}h）</span><span>${yen(a.amount)} <span style="color:var(--accent)">→ 売上 ${yen(Math.round(a.amount * PROJECT_BILLING_RATE))}</span></span></div>`).join("")}
+      <div class="pay-line"><span>組織運営（${alloc.orgHours}h）</span><span>${yen(alloc.orgAmount)}</span></div>
+      <div class="pay-line" style="color:var(--muted)"><span>プロジェクト売上の合計</span><span>${yen(Math.round(alloc.pjAmount * PROJECT_BILLING_RATE))}（うち収益 ${yen(Math.round(alloc.pjAmount * (PROJECT_BILLING_RATE - 1)))}）</span></div>` : "";
     const detail = open ? `
       <tr class="pay-detail"><td colspan="10">
         ${r.calc.lines.map(l => `<div class="pay-line"><span>${escapeHtml(l.label)}</span><span>${yen(l.amount)}</span></div>`).join("")}
@@ -1751,6 +1752,15 @@ function renderCompensation() {
       </div>
     </div>`;
 
+  // 損益は支払総額に対して見る。按分に載るのはプロジェクト関与者だけなので、
+  // その中の比率を出すと実態より大きく見えてしまう。
+  const pjAllocTotal = payable.reduce((s, r) => {
+    const a = payAllocation(r.name, r.calc.total);
+    return s + (a ? a.pjAmount : 0);
+  }, 0);
+  const billingTotal = Math.round(pjAllocTotal * PROJECT_BILLING_RATE);
+  const profit = billingTotal - total;
+
   const warn = [];
   if (missingScore) warn.push(`360°評価が未入力 ${missingScore}名`);
   if (missingAttendance) warn.push(`出席率が未入力 ${missingAttendance}名（各 ${yen(PAY_RULES.attendancePenalty)} として計算しています）`);
@@ -1758,11 +1768,19 @@ function renderCompensation() {
   return `
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
-        <div class="card-title">${payMonthLabel()}分の報酬</div>
+        <div class="card-title">${payMonthLabel()}分の報酬支払額</div>
         <div style="font-size:20px;font-weight:700">${yen(total)}</div>
       </div>
+      <div style="display:grid;grid-template-columns:auto auto;gap:2px 16px;justify-content:start;font-size:13px;line-height:1.9;margin-bottom:8px">
+        <span style="color:var(--muted)">プロジェクト按分</span>
+        <span>${yen(pjAllocTotal)}<span style="color:var(--muted);font-size:11px;margin-left:6px">支払額の${total ? (pjAllocTotal / total * 100).toFixed(1) : "0.0"}%</span></span>
+        <span style="color:var(--muted)">売上（按分×${PROJECT_BILLING_RATE}）</span>
+        <span>${yen(billingTotal)}<span style="color:var(--muted);font-size:11px;margin-left:6px">うち収益 ${yen(billingTotal - pjAllocTotal)}</span></span>
+        <span style="color:var(--muted)">最終損益</span>
+        <span style="font-weight:700;color:${profit < 0 ? "var(--pink-text)" : "#2f7d4a"}">${yen(profit)}</span>
+      </div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
-        支給対象 ${payable.length}名 ／ 対象外 ${unpayable.length}名
+        支給対象 ${payable.length}名 ／ 対象外 ${unpayable.length}名 ／ プロジェクト関与 ${pjMembers.length}名
       </div>
       ${warn.length ? `<div class="warn" style="margin-bottom:8px">${warn.map(escapeHtml).join("／")}</div>` : ""}
       ${payIsForecast() ? `<div class="warn" style="margin-bottom:8px">予想値です。${new Date().getMonth() + 1}月${new Date().getDate()}日時点の稼働を月末まで引き伸ばして（${payForecastFactor().toFixed(2)}倍）計算しています。稼働時間以外の項目と按分比率は確定分と同じ値を使っています。</div>` : ""}
