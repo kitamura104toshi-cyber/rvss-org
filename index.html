@@ -1959,27 +1959,79 @@ function payScoreBonus(pi) {
 
 // 按分タブ。プロジェクト列はNotionに存在するものから自動で決まるので、
 // PJが増えてもここを直す必要はない。
-function buildPayAllocationRows() {
+// プロジェクトへの請求は、そのプロジェクトに按分した報酬の1.5倍。
+// 差額（＝按分の0.5倍）がこちら側の収益になる。
+const PROJECT_BILLING_RATE = 1.5;
+
+// 按分タブ。1人ずつの按分と請求額、そのあとにプロジェクト別の集計と、
+// プロジェクト／組織運営の比率を置く。請求額と収益は計算式なので、按分を直せば追随する。
+// offset は表の上に置かれる行数（見出し行のぶん）。
+function buildPayAllocationRows(_entries, offset) {
+  const above = offset || 0;
   const label = payMonthLabel();
-  const entries = payEntries().filter(e => e.calc.payable);
-  const withPj = entries
+  const withPj = payEntries().filter(e => e.calc.payable)
     .map(e => ({ ...e, alloc: payAllocation(e.name, e.calc.total) }))
     .filter(e => e.alloc && e.alloc.rows.length > 0);
   const projects = Array.from(new Set(withPj.flatMap(e => e.alloc.rows.map(r => r.name)))).sort();
+
   const rows = [[
-    "担当者", "支払額", "PJ按分", "組織運営按分", "プロジェクト稼働時間", "組織運営稼働時間", `${label}合計`,
-    ...projects,
+    "担当者", "支払額", "PJ按分", "請求額（PJ按分×1.5）", "収益", "組織運営按分",
+    "プロジェクト稼働時間", "組織運営稼働時間", `${label}合計`, ...projects,
   ]];
-  const total = [0, 0, 0, 0, 0, 0, ...projects.map(() => 0)];
+  const byProject = {};   // プロジェクト名 -> { amount, hours, people }
+  projects.forEach(p => { byProject[p] = { amount: 0, hours: 0, people: 0 }; });
+
   for (const e of withPj) {
     const a = e.alloc;
-    const byPj = Object.fromEntries(a.rows.map(r => [r.name, r.hours]));
-    const cells = [e.calc.total, a.pjAmount, a.orgAmount, a.pjTotal, a.orgHours, a.hours,
-      ...projects.map(p => byPj[p] || 0)];
-    cells.forEach((v, i) => { total[i] += Number(v) || 0; });
-    rows.push([payExportName(e.name), ...cells]);
+    const hoursByPj = Object.fromEntries(a.rows.map(r => [r.name, r.hours]));
+    a.rows.forEach(r => {
+      byProject[r.name].amount += r.amount;
+      byProject[r.name].hours += r.hours;
+      byProject[r.name].people += 1;
+    });
+    const r = rows.length + 1 + above;   // 書き出し後の行番号
+    rows.push([
+      payExportName(e.name), e.calc.total, a.pjAmount,
+      `=C${r}*${PROJECT_BILLING_RATE}`, `=D${r}-C${r}`,
+      a.orgAmount, a.pjTotal, a.orgHours, a.hours,
+      ...projects.map(p => hoursByPj[p] || 0),
+    ]);
   }
-  rows.push(["合計", ...total.map(v => Math.round(v * 10) / 10)]);
+  const first = 2 + above, last = rows.length + above;
+  const sum = c => `=SUM(${c}${first}:${c}${last})`;
+  rows.push(["合計", sum("B"), sum("C"), sum("D"), sum("E"), sum("F"), sum("G"), sum("H"), sum("I"),
+    ...projects.map((_, i) => sum(String.fromCharCode(74 + i)))]);
+
+  // ここからプロジェクト別。1人の按分を複数PJに割ったものを、PJ側で足し直す。
+  rows.push([]);
+  rows.push([`${label}分 プロジェクト別の請求`]);
+  const pjHeader = rows.length + 1 + above;
+  rows.push(["プロジェクト", "人数", "PJ按分", "請求額（×1.5）", "収益", "稼働時間"]);
+  projects.forEach(p => {
+    const v = byProject[p];
+    const r = rows.length + 1 + above;
+    rows.push([p, v.people, Math.round(v.amount), `=C${r}*${PROJECT_BILLING_RATE}`, `=D${r}-C${r}`,
+      Math.round(v.hours * 10) / 10]);
+  });
+  const pjFirst = pjHeader + 1, pjLast = rows.length + above;
+  rows.push(["合計", `=SUM(B${pjFirst}:B${pjLast})`, `=SUM(C${pjFirst}:C${pjLast})`,
+    `=SUM(D${pjFirst}:D${pjLast})`, `=SUM(E${pjFirst}:E${pjLast})`, `=SUM(F${pjFirst}:F${pjLast})`]);
+  const pjTotalRow = rows.length + above;
+
+  // 支払（コスト）と請求（売上）の差し引き、そしてプロジェクトと組織運営の比率
+  const memberTotalRow = first - 1 + withPj.length + 1;
+  rows.push([]);
+  rows.push([`${label}分 損益とプロジェクト比率`]);
+  rows.push(["項目", "金額"]);
+  const kpiFirst = rows.length + 1 + above;
+  rows.push(["支払報酬の合計", `=B${memberTotalRow}`]);
+  rows.push(["うちプロジェクト按分", `=C${memberTotalRow}`]);
+  rows.push(["うち組織運営按分", `=F${memberTotalRow}`]);
+  rows.push(["プロジェクトへの請求額", `=D${pjTotalRow}`]);
+  rows.push(["収益（請求額−プロジェクト按分）", `=E${pjTotalRow}`]);
+  rows.push(["損益（請求額−支払報酬の合計）", `=B${kpiFirst + 3}-B${kpiFirst}`]);
+  rows.push(["プロジェクト比率", `=IF(B${kpiFirst}=0,0,B${kpiFirst + 1}/B${kpiFirst})`]);
+  rows.push(["組織運営比率", `=IF(B${kpiFirst}=0,0,B${kpiFirst + 2}/B${kpiFirst})`]);
   return rows;
 }
 
@@ -2003,7 +2055,7 @@ function paySectionRows(build, entries) {
 function payBookTabs() {
   const tabs = [
     { title: "報酬一覧", index: 0, headerRowIndex: 1, rows: paySectionRows(buildPaySheetRows) },
-    { title: "按分",     index: 1, headerRowIndex: 1, rows: [[paySectionTitle()], ...buildPayAllocationRows()] },
+    { title: "按分",     index: 1, headerRowIndex: 1, rows: paySectionRows(buildPayAllocationRows) },
     { title: "業務内容", index: 2, headerRowIndex: 1, rows: [[paySectionTitle()], ...buildPayWorkRows()] },
   ];
   // 来月分は報酬一覧が有償枠だけになるので、全員の顔ぶれも別タブに残す。
