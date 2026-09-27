@@ -2428,6 +2428,18 @@ function setRecruitOverrideField(key, field, value) {
   save(); render();
   window.scrollTo(0, y);
 }
+// フォーム回答が来るまでの暫定の枠数。シートに募集人数が入ったらそちらが優先されるので、
+// ここで置いた数字は自然に役目を終える。空欄にすれば「募集なし」に戻る。
+function setProvisionalCapacity(key) {
+  const cur = ((state.recruitOverrides || {})[key] || {}).capacity;
+  inputDialog("仮置きする募集枠の数（空欄で取り消し）", cur != null ? String(cur) : "", v => {
+    const raw = String(v || "").trim();
+    if (!raw) { setRecruitOverrideField(key, "capacity", null); return; }
+    const n = Number(raw.replace(/[^\d]/g, ""));
+    if (!isFinite(n) || n <= 0) { setStatus("❌ 1以上の数字を入れてください", "#b73a4a"); return; }
+    setRecruitOverrideField(key, "capacity", n);
+  });
+}
 function setRecruitStatus(key, value) { setRecruitOverrideField(key, "recruitStatus", value); }
 function setRecruitWebTest(key, value) { setRecruitOverrideField(key, "webTestStatus", value); }
 function clearRecruitOverride(key) {
@@ -2491,7 +2503,11 @@ function recruitTakenNames(e) {
 // 定員からアサイン済みを引く出し方は実態と合わないため。
 // 募集人数の記載がなければ「募集なし」として扱う（推測で枠を作らない）。
 function recruitSlots(e) {
-  const wanted = e && e.row ? e.row.capacity : null;
+  // フォーム回答が来るまでの暫定の枠。シートに募集人数が入ればそちらが優先される。
+  const ov = recruitOverrideOf(e);
+  const provisional = ov && typeof ov.capacity === "number" ? ov.capacity : null;
+  const fromSheet = e && e.row ? e.row.capacity : null;
+  const wanted = (typeof fromSheet === "number" && fromSheet > 0) ? fromSheet : provisional;
   if (typeof wanted !== "number" || wanted <= 0) return { wanted: null, taken: 0, open: null };
   const taken = recruitTakenNames(e).length;
   return { wanted, taken, open: Math.max(0, wanted - taken) };
@@ -2673,6 +2689,9 @@ function renderRecruitCardStudent(e) {
         ${recruitStatusControlHTML(e)}${webTest}
       </div>
       ${pendingNote}
+      ${roleAtLeast("core") && !(e.row && e.row.capacity > 0)
+        ? `<div style="margin-top:6px"><span style="font-size:11px;color:var(--accent);cursor:pointer" onclick="setProvisionalCapacity(${jsArg(e.key)})">${wanted === null ? "枠を仮置きする" : "仮置きの枠を変更"}</span></div>`
+        : ""}
       ${recruitOverrideNoteHTML(e)}
       ${recruitApplicantsHTML(e)}
       ${recruitDetailHTML(e)}
