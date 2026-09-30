@@ -1698,6 +1698,9 @@ function hasProjectWork(name) {
   const hb = payHoursBreakdown(name);
   if (hb.pjTotal > 0) return true;
   const mi = memberInfo(name) || {};
+  // その月の確定分があるなら、そこにプロジェクト稼働が無い人は「関与なし」。
+  // 前月の値やアプリ上の所属で拾うと、実際には稼働していない人が按分の人数に入る。
+  if (confirmedHoursOf(mi, payMonthKey())) return false;
   if (typeof mi.projectHoursTotal === "number") return mi.projectHoursTotal > 0;
   // Notion連携前のフォールバック：アプリ上のプロジェクト所属で判定する
   const info = buildMemberMap()[name];
