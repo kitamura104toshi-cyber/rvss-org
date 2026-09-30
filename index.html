@@ -1223,6 +1223,7 @@ function renderContent() {
         return `<span class="tag" style="background:${on?'#2a2a2a':'#fff'};color:${on?'#fff':'#6b6b6b'};border:1px solid ${on?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${on?'font-weight:700':''}" onclick="setPayMode('${id}')">${label}</span>`;
       }).join("")}
       <button class="btn editor-only" id="pay-notion-btn" onclick="syncWorkNotesFromNotion()" style="margin-left:8px">Notionから稼働・業務内容を取得</button>
+      <button class="btn editor-only" id="pay-hours-btn" onclick="syncHoursFromNotion()" style="margin-left:8px">稼働時間だけ取り直す</button>
       <button class="btn editor-only" id="pay-export-btn" onclick="exportPayToSheets()">スプシを開く</button>
     `;
     el.innerHTML = renderCompensation();
@@ -1519,6 +1520,10 @@ const PAY_RULES = {
 function yen(n) {
   return (n < 0 ? "-" : "") + "¥" + Math.abs(Math.round(n)).toLocaleString("ja-JP");
 }
+// マネージャー報酬と手動調整は、その月に決めたぶんだけを出す。
+// メンバー単位の欄に置いたままにすると、7月に付いた認定や8月だけの調整が
+// 翌月以降のブックにも毎回出てきてしまう。
+const PAY_MONTHLY_FIELDS = ["isManager", "adjust", "adjustNote", "scoreBonusOnly"];
 // 報酬の入力値。基本はメンバー単位だが、月によって変わるもの（リファ成立やマネージャー認定）は
 // byMonth["YYYY-MM"] に置いて、その月だけ上書きする。
 function payInfoOf(name) {
@@ -1526,8 +1531,9 @@ function payInfoOf(name) {
   let base = null;
   for (const k of [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")]) if (m[k]) { base = m[k]; break; }
   if (!base) return {};
-  const perMonth = (base.byMonth || {})[payMonthKey()];
-  return perMonth ? { ...base, ...perMonth } : base;
+  const carried = { ...base };
+  for (const k of PAY_MONTHLY_FIELDS) delete carried[k];
+  return { ...carried, ...((base.byMonth || {})[payMonthKey()] || {}) };
 }
 // 「先月分」を対象にする。稼働時間（lastMonthHours）が先月のものなので表示もそれに揃える。
 // ====== 対象月 ======
@@ -1632,6 +1638,12 @@ function computePay(name) {
   const pi = payInfoOf(name);
   const hours = payHoursBreakdown(name).hours;
   const lines = [];
+  // その月は360°評価の反映分だけを払う、と決めたケース。
+  // 稼働の下限も基本給も見ないので、通常の計算とは別に返す。
+  if (typeof pi.scoreBonusOnly === "number") {
+    lines.push({ label: "360°評価の反映分", amount: pi.scoreBonusOnly });
+    return { payable: true, hours, lines, total: pi.scoreBonusOnly, bonusOnly: true };
+  }
   if (hours === null) return { payable: false, reason: "稼働時間が未取得", hours, lines, total: 0 };
   if (hours < PAY_RULES.minPayableHours) {
     return { payable: false, reason: `稼働${PAY_RULES.minPayableHours}時間未満（${hours}h）`, hours, lines, total: 0 };
@@ -1969,6 +1981,10 @@ function payRowFormula(rowNumber) {
   return `=IF(N(C${rowNumber})<${PAY_RULES.minPayableHours},0,` +
     `N(D${rowNumber})+N(E${rowNumber})+N(G${rowNumber})+N(I${rowNumber})+N(J${rowNumber})+N(M${rowNumber})+N(N${rowNumber}))`;
 }
+// 360°評価の反映分だけを払う行。稼働の下限を見ないので、その列だけを足す。
+function payBonusOnlyFormula(rowNumber) {
+  return `=N(I${rowNumber})`;
+}
 // offset は、この表の上にさらに何行置かれるか（見出し行のぶん）。
 // 計算式は書き出し後のセル位置を指すので、ここを間違えると1行ずれた値を足してしまう。
 function buildPaySheetRows(entries, offset) {
@@ -1982,10 +1998,25 @@ function buildPaySheetRows(entries, offset) {
   const rows = [header];
   for (const e of (entries || payEntries())) {
     const c = e.calc, pi = e.pi;
+    const rowNumber = rows.length + 1 + above;
+    // 360°評価の反映分だけを払う人は、その額を360°加算の列に置いて他は空にする。
+    // 基本給や稼働ペナルティを埋めると、シート側で式を直したときに一緒に足されてしまう。
+    if (c.bonusOnly) {
+      rows.push([
+        payExportName(e.name), payBonusOnlyFormula(rowNumber),
+        c.hours != null ? c.hours : "", "", "",
+        typeof pi.attendanceRate === "number" ? pi.attendanceRate / 100 : "", "",
+        typeof pi.score360 === "number" ? pi.score360 : "",
+        pi.scoreBonusOnly,
+        "", pi.referral ? "有" : "", "", "", "",
+        "360°評価の反映分のみ", payWorkNote(e.name),
+      ]);
+      continue;
+    }
     // 40時間未満でも各項目は埋めておく。稼働時間を直せばその場で金額が立ち上がる。
     rows.push([
       payExportName(e.name),
-      payRowFormula(rows.length + 1 + above),
+      payRowFormula(rowNumber),
       c.hours != null ? c.hours : "",
       PAY_RULES.base,
       payLineAmount(c, "稼働時間ペナルティ") || payHoursPenalty(c.hours),
@@ -2150,18 +2181,76 @@ async function syncWorkNotesFromNotion() {
 }
 // Notion 側の「先月／今月」は数式で、UTCの月替わりで切り替わる。
 // 日本時間だけが次の月に入っている間（月初の0時〜9時）は、Notionの「今月」が日本時間の先月にあたる。
-// どちらを確定分として残すかは、この関数で決めてから archive_workload_hours へ渡す。
-function notionConfirmedSource() {
+const payMonthKeyOf = m => `${Math.floor(m / 12)}-${String((m % 12) + 1).padStart(2, "0")}`;
+function notionMonthSpans() {
   const now = new Date();
   const utcMonth = now.getUTCFullYear() * 12 + now.getUTCMonth();
-  const jstMonth = (() => {
-    const j = new Date(now.getTime() + 9 * 3600 * 1000);
-    return j.getUTCFullYear() * 12 + j.getUTCMonth();
-  })();
-  const key = m => `${Math.floor(m / 12)}-${String((m % 12) + 1).padStart(2, "0")}`;
-  return utcMonth < jstMonth
-    ? { month: key(jstMonth - 1), source: "current" }
-    : { month: key(utcMonth - 1), source: "last" };
+  return { last: payMonthKeyOf(utcMonth - 1), current: payMonthKeyOf(utcMonth) };
+}
+// 指定の月を、Notionの「先月」「今月」のどちらから取れるか。取れなければ null。
+function notionSourceForMonth(monthKey) {
+  const s = notionMonthSpans();
+  if (monthKey === s.last) return "last";
+  if (monthKey === s.current) return "current";
+  return null;
+}
+// 確定分として残す月と、その取り出し元。archive_workload_hours へ渡す。
+function notionConfirmedSource() {
+  const now = new Date();
+  const j = new Date(now.getTime() + 9 * 3600 * 1000);
+  const month = payMonthKeyOf(j.getUTCFullYear() * 12 + j.getUTCMonth() - 1); // 日本時間の先月
+  return { month, source: notionSourceForMonth(month) };
+}
+// 取ってきた稼働時間を、指定の月の確定分として残す。既定は日本時間の先月。
+async function archiveHoursForMonth(monthKey) {
+  const month = monthKey || notionConfirmedSource().month;
+  const source = notionSourceForMonth(month);
+  if (!source) {
+    const s = notionMonthSpans();
+    throw new Error(`${month}分はNotionから取れません（今取れるのは${s.last}分と${s.current}分だけです）`);
+  }
+  const { error } = await sb.rpc("archive_workload_hours", { p_month: month, p_source: source });
+  if (error) throw new Error(error.message);
+  return month;
+}
+// 稼働時間だけを取り直したいときの対象月。
+// 今月分は途中集計なので、確定分としては残さない（見込みの土台だけ入れ替える）。
+function payHoursSyncTarget() {
+  if (payIsForecast()) return null;
+  if (payIsNext()) return notionConfirmedSource().month;
+  return payMonthKey();
+}
+// 稼働時間と按分だけを取り直す。360°評価・出席率・手動調整・業務内容には触らない。
+// 按分は稼働時間から計算しているので、これだけで追随する。
+async function syncHoursFromNotion() {
+  const target = payHoursSyncTarget();
+  confirmDialog(
+    `${target ? target + "分" : "今月分"}の稼働時間をNotionから取り直します。` +
+      `360°評価・手動調整・業務内容は触りません。よろしいですか？`,
+    () => runHoursSync(target)
+  );
+}
+async function runHoursSync(target) {
+  const btn = document.getElementById("pay-hours-btn");
+  const restore = () => { if (btn) { btn.disabled = false; btn.textContent = "稼働時間だけ取り直す"; } };
+  if (btn) { btn.disabled = true; btn.textContent = "取得中…"; }
+  try {
+    setStatus("⏳ 稼働時間をNotionから取得中…");
+    const wl = await callEdgeFn("notion-workload-sync");
+    const month = target ? await archiveHoursForMonth(target) : null;
+    const { data: row } = await sb.from("org_state").select("data").eq("id", ROW_ID).maybeSingle();
+    if (row) applyRemote(row.data);
+    setStatus(
+      month
+        ? `✅ ${wl.matched}名の稼働時間を${month}分として取り直しました`
+        : `✅ ${wl.matched}名の今月の稼働時間を取り直しました`,
+      "#2f7d4a"
+    );
+  } catch (e) {
+    setStatus("❌ 取得失敗: " + e.message, "#b73a4a");
+  } finally {
+    restore();
+  }
 }
 async function callEdgeFn(slug, body) {
   const res = await fetch(`${SUPABASE_URL}/functions/v1/${slug}`, {
@@ -2184,10 +2273,8 @@ async function runWorkNotesSync() {
   try {
     setStatus("⏳ 稼働時間をNotionから取得中…");
     const wl = await callEdgeFn("notion-workload-sync");
-    const src = notionConfirmedSource();
     // 取った値を月に紐付けて確定分として残す（翌月の取得で過去月が消えないようにする）
-    const { error: archErr } = await sb.rpc("archive_workload_hours", { p_month: src.month, p_source: src.source });
-    if (archErr) throw new Error(archErr.message);
+    const src = { month: await archiveHoursForMonth() };
 
     setStatus(`⏳ ${payMonthLabel()}分のタスクをNotionから取得中…`);
     const wn = await callEdgeFn("notion-worklog-sync", { month: payMonthKey() });
