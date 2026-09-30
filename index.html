@@ -1523,7 +1523,7 @@ function yen(n) {
 // マネージャー報酬と手動調整は、その月に決めたぶんだけを出す。
 // メンバー単位の欄に置いたままにすると、7月に付いた認定や8月だけの調整が
 // 翌月以降のブックにも毎回出てきてしまう。
-const PAY_MONTHLY_FIELDS = ["isManager", "adjust", "adjustNote", "scoreBonusOnly"];
+const PAY_MONTHLY_FIELDS = ["isManager", "adjust", "adjustNote", "scoreBonusOnly", "countAsProject"];
 // 報酬の入力値。基本はメンバー単位だが、月によって変わるもの（リファ成立やマネージャー認定）は
 // byMonth["YYYY-MM"] に置いて、その月だけ上書きする。
 function payInfoOf(name) {
@@ -1695,6 +1695,9 @@ function payAllocation(name, total) {
 // 表示中の月のプロジェクト稼働で判定する。来月分は見込みの稼働を入れた時点で
 // プロジェクト側の人数に数える（アプリ上のアサインがまだでも、按分表には載るため）。
 function hasProjectWork(name) {
+  // 稼働時間には出ないが関与として数える（逆も）、と月ごとに決めたぶんが最優先。
+  const forced = payInfoOf(name).countAsProject;
+  if (typeof forced === "boolean") return forced;
   const hb = payHoursBreakdown(name);
   if (hb.pjTotal > 0) return true;
   const mi = memberInfo(name) || {};
