@@ -58,3 +58,19 @@ bot は `sheets-backup-bot@rvss-sheets-backup.iam.gserviceaccount.com`。
 `isEditMode` は admin のみ。`pushToSupabase()` は core 以上。
 `state = load()` は読み込み失敗時に埋め込みの初期データへ落ちるため、
 `cloudLoaded` が立つまで保存させない（古い状態で上書きする事故を防ぐ）。
+
+## 稼働時間（Notion連携）
+
+Notion「AI管理表」の `先月の稼働時間` / `今月の稼働時間` は数式で、
+**UTCの月替わりで切り替わる。** 日本時間の1日0時〜9時のあいだは、
+Notionの「今月」がまだ日本時間の先月を指している。
+月初の取り込みは UTC が月を越えてから走らせる（crons は UTC 0:10〜0:35 / JST 9:10〜9:35）。
+
+取り込んだ確定分は `memberOverrides[氏名].hoursByMonth["YYYY-MM"]` に月ごとで持つ。
+平らな `lastMonthHours` は「最後に取った月」の値でしかないので、
+報酬タブは `hoursByMonth[表示中の月]` だけを見る。
+月へ紐付ける処理は SQL 関数 `archive_workload_hours(月, 'last'|'current')`。
+アプリの「Notionから稼働・業務内容を取得」ボタンもこれを呼ぶ。
+
+**`memberOverrides[氏名]` を作り直さないこと。** Notion取得ぶん・契約状況・スキル分類など、
+編集フォームに無い項目が消える。必ず既存オブジェクトを spread して上書きする。
