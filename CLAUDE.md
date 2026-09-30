@@ -64,7 +64,10 @@ bot は `sheets-backup-bot@rvss-sheets-backup.iam.gserviceaccount.com`。
 Notion「AI管理表」の `先月の稼働時間` / `今月の稼働時間` は数式で、
 **UTCの月替わりで切り替わる。** 日本時間の1日0時〜9時のあいだは、
 Notionの「今月」がまだ日本時間の先月を指している。
-月初の取り込みは UTC が月を越えてから走らせる（crons は UTC 0:10〜0:35 / JST 9:10〜9:35）。
+月初の取り込みは日本時間 1日 1:00／1:15／1:30。UTCでは前月末日の16:00なので、
+cron は日付 `28-31` で仕掛け、日本時間が1日のときだけ実行するよう中で見ている。
+この時刻だとUTCはまだ前月なので、確定分はNotionの**「今月」**から取る。
+どちらから取るかは SQL 関数 `archive_workload_hours_auto()` が判断する。
 
 取り込んだ確定分は `memberOverrides[氏名].hoursByMonth["YYYY-MM"]` に月ごとで持つ。
 平らな `lastMonthHours` は「最後に取った月」の値でしかないので、
@@ -74,3 +77,16 @@ Notionの「今月」がまだ日本時間の先月を指している。
 
 **`memberOverrides[氏名]` を作り直さないこと。** Notion取得ぶん・契約状況・スキル分類など、
 編集フォームに無い項目が消える。必ず既存オブジェクトを spread して上書きする。
+
+## 報酬の月ごとの値
+
+`compensation.members[氏名]` 直下に置いた値は全部の月に効いてしまう。
+`PAY_MONTHLY_FIELDS`（`isManager` / `adjust` / `adjustNote` / `scoreBonusOnly`）は
+`byMonth["YYYY-MM"]` に明示のある月だけ有効。
+7月に付いたマネージャー認定や8月だけの手動調整が毎月出ていたのを直したもの。
+
+`scoreBonusOnly` はその月に360°評価の反映分だけを払う指定。
+稼働の下限も基本給も見ず、書き出しでは360°加算の列（I）だけを足す式にする。
+
+「稼働時間だけ取り直す」ボタンは稼働時間と按分だけを入れ替える。
+360°評価・出席率・手動調整・業務内容には触らない。
