@@ -1222,7 +1222,7 @@ function renderContent() {
         const on = payMode === id;
         return `<span class="tag" style="background:${on?'#2a2a2a':'#fff'};color:${on?'#fff':'#6b6b6b'};border:1px solid ${on?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${on?'font-weight:700':''}" onclick="setPayMode('${id}')">${label}</span>`;
       }).join("")}
-      <button class="btn editor-only" id="pay-notion-btn" onclick="syncWorkNotesFromNotion()" style="margin-left:8px">Notionから業務内容を取得</button>
+      <button class="btn editor-only" id="pay-notion-btn" onclick="syncWorkNotesFromNotion()" style="margin-left:8px">Notionから稼働・業務内容を取得</button>
       <button class="btn editor-only" id="pay-export-btn" onclick="exportPayToSheets()">スプシを開く</button>
     `;
     el.innerHTML = renderCompensation();
@@ -1562,11 +1562,33 @@ function payForecastFactor() {
   const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   return days / Math.max(1, now.getDate());
 }
+// 確定した稼働時間は hoursByMonth["YYYY-MM"] に月ごとで入っている（Notion取得時に積む）。
+// 平らな lastMonthHours は「最後に取った月」の値なので、取得が遅れていると表示中の月とずれる。
+function confirmedHoursOf(mi, monthKey) {
+  const rec = ((mi || {}).hoursByMonth || {})[monthKey];
+  if (!rec || typeof rec.hours !== "number") return null;
+  return {
+    hours: rec.hours,
+    pjTotal: typeof rec.projectHoursTotal === "number" ? rec.projectHoursTotal : 0,
+    buckets: rec.projectHours || {},
+  };
+}
+// 来月分の土台にする「いちばん新しい確定分」。
+function latestConfirmedHours(mi) {
+  const keys = Object.keys(((mi || {}).hoursByMonth) || {}).sort();
+  for (let i = keys.length - 1; i >= 0; i--) {
+    const rec = confirmedHoursOf(mi, keys[i]);
+    if (rec) return rec;
+  }
+  return null;
+}
 // 対象月の稼働時間と、その内訳（プロジェクト別）。予想モードでは見込み値に引き伸ばす。
 function payHoursBreakdown(name) {
   const mi = memberInfo(name) || {};
   if (!payIsForecast()) {
-    const last = typeof mi.lastMonthHours === "number" ? mi.lastMonthHours : null;
+    // 先月分は表示中の月そのものを、来月分は直近の確定分を土台にする。
+    const rec = payIsNext() ? latestConfirmedHours(mi) : confirmedHoursOf(mi, payMonthKey());
+    const last = rec ? rec.hours : (typeof mi.lastMonthHours === "number" ? mi.lastMonthHours : null);
     // 来月分は見込みなので、先月の実績とは別の欄に持つ。
     // ここを lastMonthHours に混ぜると、確定済みの先月分まで動いてしまう。
     const pi = payIsNext() ? payInfoOf(name) : {};
@@ -1577,8 +1599,8 @@ function payHoursBreakdown(name) {
       hours: typeof assumed === "number" ? assumed : last,
       pjTotal: nextBuckets
         ? (typeof pi.nextProjectHoursTotal === "number" ? pi.nextProjectHoursTotal : 0)
-        : (typeof mi.projectHoursTotal === "number" ? mi.projectHoursTotal : 0),
-      buckets: nextBuckets || mi.projectHours || {},
+        : (rec ? rec.pjTotal : (typeof mi.projectHoursTotal === "number" ? mi.projectHoursTotal : 0)),
+      buckets: nextBuckets || (rec ? rec.buckets : (mi.projectHours || {})),
       actual: last,
       assumed: typeof assumed === "number" ? assumed : null,
     };
@@ -2117,37 +2139,65 @@ function buildPayWorkRows() {
   });
   return rows;
 }
-// Notion の DB_タスク から、その月に完了したタスクを担当者ごとに集めて業務内容欄へ入れる。
+// Notion から、稼働時間（AI管理表）と完了タスク（DB_タスク）の両方を取り直す。
 // 書き込みは Edge Function 側で org_state に直接行われ、購読経由でこちらへ返ってくる。
+const PAY_NOTION_BTN_LABEL = "Notionから稼働・業務内容を取得";
 async function syncWorkNotesFromNotion() {
   confirmDialog(
-    `${payMonthLabel()}の業務内容をNotionから取り直します。手で書いた内容は上書きされます。よろしいですか？`,
+    `稼働時間と${payMonthLabel()}の業務内容をNotionから取り直します。手で書いた業務内容は上書きされます。よろしいですか？`,
     runWorkNotesSync
   );
 }
+// Notion 側の「先月／今月」は数式で、UTCの月替わりで切り替わる。
+// 日本時間だけが次の月に入っている間（月初の0時〜9時）は、Notionの「今月」が日本時間の先月にあたる。
+// どちらを確定分として残すかは、この関数で決めてから archive_workload_hours へ渡す。
+function notionConfirmedSource() {
+  const now = new Date();
+  const utcMonth = now.getUTCFullYear() * 12 + now.getUTCMonth();
+  const jstMonth = (() => {
+    const j = new Date(now.getTime() + 9 * 3600 * 1000);
+    return j.getUTCFullYear() * 12 + j.getUTCMonth();
+  })();
+  const key = m => `${Math.floor(m / 12)}-${String((m % 12) + 1).padStart(2, "0")}`;
+  return utcMonth < jstMonth
+    ? { month: key(jstMonth - 1), source: "current" }
+    : { month: key(utcMonth - 1), source: "last" };
+}
+async function callEdgeFn(slug, body) {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/${slug}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
 async function runWorkNotesSync() {
   const btn = document.getElementById("pay-notion-btn");
-  const restore = () => { if (btn) { btn.disabled = false; btn.textContent = "Notionから業務内容を取得"; } };
+  const restore = () => { if (btn) { btn.disabled = false; btn.textContent = PAY_NOTION_BTN_LABEL; } };
   if (btn) { btn.disabled = true; btn.textContent = "取得中…"; }
-  setStatus(`⏳ ${payMonthLabel()}分のタスクをNotionから取得中…`);
   try {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/notion-worklog-sync`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      },
-      body: JSON.stringify({ month: payMonthKey() }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    setStatus("⏳ 稼働時間をNotionから取得中…");
+    const wl = await callEdgeFn("notion-workload-sync");
+    const src = notionConfirmedSource();
+    // 取った値を月に紐付けて確定分として残す（翌月の取得で過去月が消えないようにする）
+    const { error: archErr } = await sb.rpc("archive_workload_hours", { p_month: src.month, p_source: src.source });
+    if (archErr) throw new Error(archErr.message);
+
+    setStatus(`⏳ ${payMonthLabel()}分のタスクをNotionから取得中…`);
+    const wn = await callEdgeFn("notion-worklog-sync", { month: payMonthKey() });
+
     // 購読を取りこぼしても画面が古いままにならないよう、ここで読み直す
     const { data: row } = await sb.from("org_state").select("data").eq("id", ROW_ID).maybeSingle();
     if (row) applyRemote(row.data);
-    const missed = data.unmatched || [];
+    const missed = wn.unmatched || [];
     setStatus(
-      `✅ ${data.matched}名分を取得しました` +
+      `✅ 稼働時間${wl.matched}名（${src.month}分として保存）／業務内容${wn.matched}名を取得しました` +
         (missed.length ? `（名前が一致せず取り込めず: ${missed.join("・")}）` : ""),
       missed.length ? "#b7862f" : "#2f7d4a"
     );
@@ -3320,7 +3370,7 @@ function renderMemberCard(n, info) {
         ` : ""}
       </div>
       ${showAdmin ? contractRemainingHTML(mi) : ""}
-      ${showAdmin ? workloadHTML(mi.lastMonthHours) : ""}
+      ${showAdmin ? workloadHTML(mi) : ""}
       ${profileField("趣味", mi.hobby)}
       ${profileField("経験", mi.experience)}
       ${profileField("スキル", mi.skills)}
@@ -3715,11 +3765,17 @@ function contractRemainingHTML(mi) {
   `;
 }
 // 前月稼働時間（Notionの稼働管理表と連携して自動反映される想定。手動編集も可）
-function workloadHTML(lastMonthHours) {
-  const has = typeof lastMonthHours === "number";
-  const value = has ? `${lastMonthHours}時間` : "";
+// 稼働時間はNotionから取り込んだものなので、どの月の値かを見出しに出す。
+// 月初は取り込みがまだ終わっていないことがあり、「前月」と実体がずれる。
+function workloadHTML(mi) {
+  const keys = Object.keys(((mi || {}).hoursByMonth) || {}).sort();
+  const key = keys.length ? keys[keys.length - 1] : null;
+  const rec = key ? confirmedHoursOf(mi, key) : null;
+  const hours = rec ? rec.hours : (typeof (mi || {}).lastMonthHours === "number" ? mi.lastMonthHours : null);
+  const value = typeof hours === "number" ? `${hours}時間` : "";
+  const label = key ? `${Number(key.slice(0, 4))}年${Number(key.slice(5))}月の稼働時間` : "直近の稼働時間";
   return `
-    <div class="section-label">前月稼働時間</div>
+    <div class="section-label">${label}</div>
     <div style="font-size:13px;line-height:1.6;margin-bottom:10px;color:${value ? "var(--text)" : "var(--muted)"}">${value ? escapeHtml(value) : "未設定"}</div>
   `;
 }
@@ -3822,15 +3878,15 @@ function saveMemberEdit(oldName) {
     });
   }
 
-  // プロフィール情報のoverride保存（契約状況・BSバッジ・スキル分類は編集フォーム対象外なので保持する）
-  const ndaSigned = (state.memberOverrides[newName] || {}).ndaSigned;
-  const outsourcingSigned = (state.memberOverrides[newName] || {}).outsourcingSigned;
-  const isBS = (state.memberOverrides[newName] || {}).isBS;
-  const skillCategories = (state.memberOverrides[newName] || {}).skillCategories;
-  if (!univ && !area && !status && !contractStartDate && !availableUntil && !availableUntilNote && !tenureIntent && !handoverNeeded && lastMonthHours == null && !experience && !skills && !wantToDo && !hobby && !admires && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories) {
+  // プロフィール情報のoverride保存。
+  // 編集フォームに無い項目（契約状況・BSバッジ・スキル分類・Notionから取り込んだ稼働時間など）は
+  // 元の値を引き継ぐ。ここでオブジェクトを作り直すと、フォームに無い値が編集のたびに消える。
+  const kept = state.memberOverrides[newName] || {};
+  const { ndaSigned, outsourcingSigned, isBS, skillCategories, hoursByMonth } = kept;
+  if (!univ && !area && !status && !contractStartDate && !availableUntil && !availableUntilNote && !tenureIntent && !handoverNeeded && lastMonthHours == null && !experience && !skills && !wantToDo && !hobby && !admires && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories && !hoursByMonth) {
     delete state.memberOverrides[newName];
   } else {
-    state.memberOverrides[newName] = { university: univ, area: area, status, contractStartDate, availableUntil, availableUntilNote, tenureIntent, handoverNeeded, lastMonthHours, experience, skills, wantToDo, hobby, admires, ndaSigned, outsourcingSigned, isBS, skillCategories };
+    state.memberOverrides[newName] = { ...kept, university: univ, area: area, status, contractStartDate, availableUntil, availableUntilNote, tenureIntent, handoverNeeded, lastMonthHours, experience, skills, wantToDo, hobby, admires };
   }
   save(); closeModal(); render();
 }
