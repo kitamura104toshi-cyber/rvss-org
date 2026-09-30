@@ -81,12 +81,12 @@ cron は日付 `28-31` で仕掛け、日本時間が1日のときだけ実行�
 ## 報酬の月ごとの値
 
 `compensation.members[氏名]` 直下に置いた値は全部の月に効いてしまう。
-`PAY_MONTHLY_FIELDS`（`isManager` / `adjust` / `adjustNote` / `scoreBonusOnly`）は
+`PAY_MONTHLY_FIELDS`（`isManager` / `adjust` / `adjustNote` / `countAsProject`）は
 `byMonth["YYYY-MM"]` に明示のある月だけ有効。
 7月に付いたマネージャー認定や8月だけの手動調整が毎月出ていたのを直したもの。
 
-`scoreBonusOnly` はその月に360°評価の反映分だけを払う指定。
-稼働の下限も基本給も見ず、書き出しでは360°加算の列（I）だけを足す式にする。
+**稼働40時間以上は絶対の条件。** 360°評価などの加算がいくらあっても、
+これを満たさない月は支給しない。
 
 「稼働時間だけ取り直す」ボタンは稼働時間と按分だけを入れ替える。
 360°評価・出席率・手動調整・業務内容には触らない。
