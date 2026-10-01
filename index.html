@@ -1857,7 +1857,9 @@ function renderCompensation() {
         支給対象 ${payable.length}名 ／ 対象外 ${unpayable.length}名 ／ プロジェクト関与 ${pjMembers.length}名
       </div>
       ${warn.length ? `<div class="warn" style="margin-bottom:8px">${warn.map(escapeHtml).join("／")}</div>` : ""}
-      ${payIsForecast() ? `<div class="warn" style="margin-bottom:8px">予想値です。${new Date().getMonth() + 1}月${new Date().getDate()}日時点の稼働を月末まで引き伸ばして（${payForecastFactor().toFixed(2)}倍）計算しています。稼働時間以外の項目と按分比率は確定分と同じ値を使っています。</div>` : ""}
+      ${payMonthIsAssumed()
+        ? `<div class="warn" style="margin-bottom:8px">予想値です。稼働時間は${payMonthKey()}分として置いた前提値（有償枠のみ）で、按分はその前提のプロジェクト稼働で出しています。稼働時間以外の項目は確定分と同じ値です。</div>`
+        : payIsForecast() ? `<div class="warn" style="margin-bottom:8px">予想値です。${new Date().getMonth() + 1}月${new Date().getDate()}日時点の稼働を月末まで引き伸ばして（${payForecastFactor().toFixed(2)}倍）計算しています。稼働時間以外の項目と按分比率は確定分と同じ値を使っています。</div>` : ""}
       <div style="font-size:11px;color:var(--muted);line-height:1.8">
         基本給 ${yen(PAY_RULES.base)}／稼働 60h以上±0・50h台 ${yen(-10000)}・40h台 ${yen(-20000)}・40h未満は支給なし／
         出席率 ${PAY_RULES.attendanceMin}%未満 ${yen(PAY_RULES.attendancePenalty)}／
