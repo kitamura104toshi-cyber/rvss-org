@@ -2058,9 +2058,14 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
     .filter(e => e.alloc && e.alloc.pjTotal > 0);   // 内訳未入力でもPJ稼働があれば載せる
   const projects = Array.from(new Set(withPj.flatMap(e => e.alloc.rows.map(r => r.name)))).sort();
 
+  // プロジェクト列は J から並ぶ。そのあとに内訳の合計を置き、請求額の分母に使う。
+  const colOf = i => String.fromCharCode(74 + i);
+  const lastPjCol = colOf(Math.max(0, projects.length - 1));
+  const breakdownCol = colOf(projects.length);
   const rows = [[
     "担当者", "支払額", "PJ按分", "売上（PJ按分×1.5）", "収益", "組織運営按分",
     "プロジェクト稼働時間", "組織運営稼働時間", `${label}合計`, ...projects,
+    ...(projects.length ? ["内訳合計"] : []),
   ]];
 
   for (const e of withPj) {
@@ -2074,12 +2079,14 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
       `=C${r}*${PROJECT_BILLING_RATE}`, `=D${r}-C${r}`,
       `=B${r}-C${r}`, a.pjTotal, a.orgHours, a.hours,
       ...projects.map(p => hoursByPj[p] || 0),
+      ...(projects.length ? [`=SUM(J${r}:${lastPjCol}${r})`] : []),
     ]);
   }
   const first = 2 + above, last = rows.length + above;
   const sum = c => `=SUM(${c}${first}:${c}${last})`;
   rows.push(["合計", sum("B"), sum("C"), sum("D"), sum("E"), sum("F"), sum("G"), sum("H"), sum("I"),
-    ...projects.map((_, i) => sum(String.fromCharCode(74 + i)))]);
+    ...projects.map((_, i) => sum(colOf(i))),
+    ...(projects.length ? [sum(breakdownCol)] : [])]);
 
   // 売上は「プロジェクト按分の合計 × 1.5」。プロジェクト別の内訳表からではなく
   // 上の表の合計から直接出す（内訳が未入力の人がいても売上が欠けないようにするため）。
@@ -2107,17 +2114,22 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
   rows.push(["人数比率（プロジェクト：組織運営）",
     `=IF(B${peopleRow}+B${peopleRow + 1}=0,"—",B${peopleRow}&"："&B${peopleRow + 1})`]);
 
-  // 各PJへの請求額。兼任の人は、その人の売上をプロジェクト稼働時間の比で割り振る。
-  // 合計は上の表の売上合計（D列）と一致する（比率計算のぶん数円ずれることがある）。
-  rows.push([]);
-  rows.push([]);
-  rows.push(["各PJ請求額"]);
-  const billFirst = rows.length + 1 + above;
-  const billShare = col =>
-    `=ROUND(SUMPRODUCT($D$${memberFirst}:$D$${memberLast}` +
-    `*${col}$${memberFirst}:${col}$${memberLast}/$G$${memberFirst}:$G$${memberLast}))`;
-  projects.forEach((p, i) => rows.push([p, billShare(String.fromCharCode(74 + i))]));
-  rows.push(["合計", `=SUM(B${billFirst}:B${billFirst + projects.length - 1})`]);
+  // 各PJへの請求額。兼任の人は、その人の売上をプロジェクト別の稼働時間の比で割り振る。
+  // 分母は「内訳合計」列。ここを総稼働やプロジェクト稼働時間にすると、Notion側の
+  // 丸め差（内訳の和と稼働時間合計が0.1hずれる等）がそのまま請求額の差になる。
+  // 内訳が空の人は分母を1に逃がす（その人のぶんは請求に乗らない）。
+  if (projects.length) {
+    rows.push([]);
+    rows.push([]);
+    rows.push(["各PJ請求額"]);
+    const billFirst = rows.length + 1 + above;
+    const den = `$${breakdownCol}$${memberFirst}:$${breakdownCol}$${memberLast}`;
+    const billShare = col =>
+      `=ROUND(SUMPRODUCT($D$${memberFirst}:$D$${memberLast}` +
+      `*${col}$${memberFirst}:${col}$${memberLast}/IF(${den}=0,1,${den})))`;
+    projects.forEach((p, i) => rows.push([p, billShare(colOf(i))]));
+    rows.push(["合計", `=SUM(B${billFirst}:B${billFirst + projects.length - 1})`]);
+  }
   return rows;
 }
 
