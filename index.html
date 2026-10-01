@@ -2067,10 +2067,12 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
     const a = e.alloc;
     const hoursByPj = Object.fromEntries(a.rows.map(r => [r.name, r.hours]));
     const r = rows.length + 1 + above;   // 書き出し後の行番号
+    // 按分は式で出す。稼働時間を直せば按分・売上・収益がその場で追随する。
     rows.push([
-      payExportName(e.name), e.calc.total, a.pjAmount,
+      payExportName(e.name), e.calc.total,
+      `=IFERROR(B${r}*G${r}/I${r},0)`,
       `=C${r}*${PROJECT_BILLING_RATE}`, `=D${r}-C${r}`,
-      a.orgAmount, a.pjTotal, a.orgHours, a.hours,
+      `=B${r}-C${r}`, a.pjTotal, a.orgHours, a.hours,
       ...projects.map(p => hoursByPj[p] || 0),
     ]);
   }
@@ -2104,6 +2106,18 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
     `=TEXT(B${kpiFirst + 1},"#,##0")&"："&TEXT(B${kpiFirst + 2},"#,##0")`]);
   rows.push(["人数比率（プロジェクト：組織運営）",
     `=IF(B${peopleRow}+B${peopleRow + 1}=0,"—",B${peopleRow}&"："&B${peopleRow + 1})`]);
+
+  // 各PJへの請求額。兼任の人は、その人の売上をプロジェクト稼働時間の比で割り振る。
+  // 合計は上の表の売上合計（D列）と一致する（比率計算のぶん数円ずれることがある）。
+  rows.push([]);
+  rows.push([]);
+  rows.push(["各PJ請求額"]);
+  const billFirst = rows.length + 1 + above;
+  const billShare = col =>
+    `=ROUND(SUMPRODUCT($D$${memberFirst}:$D$${memberLast}` +
+    `*${col}$${memberFirst}:${col}$${memberLast}/$G$${memberFirst}:$G$${memberLast}))`;
+  projects.forEach((p, i) => rows.push([p, billShare(String.fromCharCode(74 + i))]));
+  rows.push(["合計", `=SUM(B${billFirst}:B${billFirst + projects.length - 1})`]);
   return rows;
 }
 
