@@ -1523,7 +1523,8 @@ function yen(n) {
 // マネージャー報酬と手動調整は、その月に決めたぶんだけを出す。
 // メンバー単位の欄に置いたままにすると、7月に付いた認定や8月だけの調整が
 // 翌月以降のブックにも毎回出てきてしまう。
-const PAY_MONTHLY_FIELDS = ["isManager", "adjust", "adjustNote", "countAsProject"];
+const PAY_MONTHLY_FIELDS = ["isManager", "adjust", "adjustNote", "countAsProject",
+  "assumedHours", "assumedProjectHours", "assumedProjectHoursTotal"];
 // 報酬の入力値。基本はメンバー単位だが、月によって変わるもの（リファ成立やマネージャー認定）は
 // byMonth["YYYY-MM"] に置いて、その月だけ上書きする。
 function payInfoOf(name) {
@@ -1588,9 +1589,25 @@ function latestConfirmedHours(mi) {
   }
   return null;
 }
+// 予想月の前提稼働。その月の byMonth に置いてあれば、どのモードでもこれを使う。
+// 「有償枠は全員60時間」のような前提で先に月を組むときの入口。
+function assumedHoursOf(name) {
+  const pi = payInfoOf(name);
+  if (typeof pi.assumedHours !== "number") return null;
+  return {
+    hours: pi.assumedHours,
+    pjTotal: typeof pi.assumedProjectHoursTotal === "number" ? pi.assumedProjectHoursTotal : 0,
+    buckets: pi.assumedProjectHours || {},
+  };
+}
 // 対象月の稼働時間と、その内訳（プロジェクト別）。予想モードでは見込み値に引き伸ばす。
 function payHoursBreakdown(name) {
   const mi = memberInfo(name) || {};
+  const assumed = assumedHoursOf(name);
+  if (assumed) {
+    const last = latestConfirmedHours(mi);
+    return { ...assumed, actual: last ? last.hours : null, assumed: assumed.hours };
+  }
   if (!payIsForecast()) {
     // 先月分は表示中の月そのものを、来月分は直近の確定分を土台にする。
     const rec = payIsNext() ? latestConfirmedHours(mi) : confirmedHoursOf(mi, payMonthKey());
@@ -1966,10 +1983,16 @@ function paidTierNames() {
   (state.paidGroups || []).forEach(g => (g.members || []).forEach(m => s.add(slotNameKey(m.name))));
   return s;
 }
-// 来月分は有償枠だけを見る。それ以外の月は全員。
+// 前提稼働を置いた月があるか。置いてある月は「有償枠ベースの予想」として扱う。
+function payMonthIsAssumed() {
+  const key = payMonthKey();
+  const m = ((state.compensation || {}).members) || {};
+  return Object.values(m).some(v => typeof (((v.byMonth || {})[key] || {}).assumedHours) === "number");
+}
+// 予想の月は有償枠だけを見る。実績の月は全員。
 function payEntries() {
   const all = payAllEntries();
-  if (!payIsNext()) return all;
+  if (!payIsNext() && !payMonthIsAssumed()) return all;
   const paid = paidTierNames();
   return all.filter(e => paid.has(slotNameKey(e.name)));
 }
