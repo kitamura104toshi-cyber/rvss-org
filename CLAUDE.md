@@ -94,3 +94,8 @@ cron は日付 `28-31` で仕掛け、日本時間が1日のときだけ実行�
 プロジェクト関与の人数（按分の人数比率）は、その月の確定分にプロジェクト稼働が
 あるかどうかだけで決める。平らな `projectHoursTotal` やアプリ上の所属を
 フォールバックに使うと、前月に数時間関わっただけの人が関与者として残る。
+
+予想月を先に組むときは `byMonth["YYYY-MM"]` に `assumedHours` /
+`assumedProjectHours` / `assumedProjectHoursTotal` を置く。置いた月は
+どのモードでもこの前提で計算し、有償枠だけを並べる（`payMonthIsAssumed`）。
+経過日数で引き伸ばす予想（`payForecastFactor`）はこれが無い月のための経路。
