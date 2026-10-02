@@ -116,8 +116,18 @@ Vercel（rvss-org-zeta）は本番。devから本番へ反映される仕組み�
 メンター／学生を書き戻すので、devでアサインをいじると上書きされる。
 **devで作業するあいだは止めたままにする。**
 
-開発側の Edge Functions は本番より古い（`notion-workload-sync` v6 など）。
-devで同期系を動かすなら、先に本番と同じものを入れること。
+開発側の Edge Functions は 2026-10-03 に本番と同じ内容へ揃えた（10本）。
+**書き出し先だけは差し替えてある。** `sheets-backup` と `sheets-area-list` の
+`SPREADSHEET_ID` は dev 用ブック（`1j6rT…`）。本番から持ってくるときは
+このIDの差し替えを忘れないこと。他の関数は本番と同一で、読み取り元のシートも同じ。
+
+SQL関数 `archive_workload_hours` / `archive_workload_hours_auto` も dev に入れてある
+（アプリの取得ボタンが rpc で呼ぶため、無いとボタンが失敗する）。
+
+dev の `compensation.exportSheets` は外してある。本番の報酬ブック（8月/9月/10月）を
+devから上書きしないため。devで書き出すと新規ブックが作られる。
+
+dev にだけある関数：`debug-sheet-dump`、`deploy-probe`（疎通確認用。消してよい）。
 
 バックアップの書き出し先は本番とdevで別ブック（本番 `1Avaf…` / dev `1j6rT…`）。
 devの作業で本番のブックは汚れない。読み取り元のシート（募集フォーム・契約・intake）は共有。
