@@ -99,3 +99,25 @@ cron は日付 `28-31` で仕掛け、日本時間が1日のときだけ実行�
 `assumedProjectHours` / `assumedProjectHoursTotal` を置く。置いた月は
 どのモードでもこの前提で計算し、有償枠だけを並べる（`payMonthIsAssumed`）。
 経過日数で引き伸ばす予想（`payForecastFactor`）はこれが無い月のための経路。
+
+## 開発環境で作業するとき
+
+`index.html` は1枚だけで、**dev用のファイルは無い。** 接続先は開いたURLで決まる。
+`.claude/launch.json` の `static` を起動して `localhost:5173` を開くと開発 Supabase。
+Vercel（rvss-org-zeta）は本番。devから本番へ反映される仕組みは無く、2つは完全に別。
+
+2026-10-03 に以下を実施済み。
+
+- 開発側の `org_state` を本番のスナップショットで入れ替えた（それまでのdevは9月中旬の状態）
+- 入れ替え前のdevは `org_state` の `id='backup-20261003-pre-refresh'` に退避してある
+- **開発側の cron 4本は全部停止**（`cron.alter_job(jobid, active := false)`。定義は残している）
+
+止めた理由は `recruitment-sync-5h`。5時間ごとに募集フォームからプロジェクトの
+メンター／学生を書き戻すので、devでアサインをいじると上書きされる。
+**devで作業するあいだは止めたままにする。**
+
+開発側の Edge Functions は本番より古い（`notion-workload-sync` v6 など）。
+devで同期系を動かすなら、先に本番と同じものを入れること。
+
+バックアップの書き出し先は本番とdevで別ブック（本番 `1Avaf…` / dev `1j6rT…`）。
+devの作業で本番のブックは汚れない。読み取り元のシート（募集フォーム・契約・intake）は共有。
