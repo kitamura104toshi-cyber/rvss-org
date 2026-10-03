@@ -1,0 +1,158 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 940" width="1400" height="940" font-family="'Yu Gothic UI','Meiryo','Hiragino Sans',sans-serif">
+  <defs>
+    <marker id="aIn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fb5"/></marker>
+    <marker id="aOut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d4a"/></marker>
+    <marker id="aMan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#999"/></marker>
+    <marker id="aApp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a5a00"/></marker>
+  </defs>
+  <rect width="1400" height="940" fill="#fbfaf7"/>
+
+  <text x="30" y="42" font-size="24" font-weight="700" fill="#222">RVSS組織管理｜データの出入り（2026-10-03 時点・本番）</text>
+  <text x="30" y="68" font-size="13" fill="#666">青＝自動で入ってくる　緑＝自動で書き出す　灰の点線＝一度だけ手で取り込み（自動連携なし）　茶＝アプリでの手入力。時刻は日本時間</text>
+
+  <!-- 見出し -->
+  <text x="30" y="104" font-size="15" font-weight="700" fill="#2f6fb5">入ってくる（取り込み元）</text>
+  <text x="1010" y="104" font-size="15" font-weight="700" fill="#2f7d4a">出ていく（書き出し先）</text>
+
+  <!-- 左：自動取り込み -->
+  <g font-size="12" fill="#333">
+    <rect x="30" y="118" width="380" height="86" rx="8" fill="#eaf2fb" stroke="#2f6fb5"/>
+    <text x="44" y="141" font-size="15" font-weight="700">① 学生募集フォームの回答（Googleスプシ）</text>
+    <text x="44" y="162">sheets-recruitment-sync ／ 4時間ごと（2・6・10・14・18・22時）</text>
+    <text x="44" y="181">→ プロジェクト新規作成・メンター・確定した学生を追加</text>
+    <text x="44" y="197" fill="#666">募集状況・定員・概要など（recruitment.rows）</text>
+
+    <rect x="30" y="214" width="380" height="70" rx="8" fill="#eaf2fb" stroke="#2f6fb5"/>
+    <text x="44" y="237" font-size="15" font-weight="700">② NDA契約管理シート（Googleスプシ）</text>
+    <text x="44" y="258">sheets-contract-sync ／ 4時間ごと（①の5分後）</text>
+    <text x="44" y="276">→ 各メンバーの NDA 締結状況</text>
+
+    <rect x="30" y="294" width="380" height="86" rx="8" fill="#eaf2fb" stroke="#2f6fb5"/>
+    <text x="44" y="317" font-size="15" font-weight="700">③ 採用管理シート「入会者」タブ（スプシ）</text>
+    <text x="44" y="338">sheets-intake-sync ／ 毎日 0:05</text>
+    <text x="44" y="357">→ 新メンバーを作成（メアドで同一人物判定）</text>
+    <text x="44" y="373" fill="#666">大学・入会日・関わり方・紹介者</text>
+
+    <rect x="30" y="390" width="380" height="86" rx="8" fill="#eaf2fb" stroke="#2f6fb5"/>
+    <text x="44" y="413" font-size="15" font-weight="700">④ Notion「AI管理表」</text>
+    <text x="44" y="434">notion-workload-sync ／ 毎月1日 1:00 ＋ 報酬タブのボタン</text>
+    <text x="44" y="453">→ 先月・今月の稼働時間、PJ別稼働</text>
+    <text x="44" y="469" fill="#666">1:15 に SQL関数が月ごとの確定値（hoursByMonth）へ固定</text>
+
+    <rect x="30" y="486" width="380" height="86" rx="8" fill="#eaf2fb" stroke="#2f6fb5"/>
+    <text x="44" y="509" font-size="15" font-weight="700">⑤ Notion「DB_タスク」（完了タスク）</text>
+    <text x="44" y="530">notion-worklog-sync ／ 毎月1日 1:30 ＋ ボタン</text>
+    <text x="44" y="549">→ 報酬の「業務内容」欄</text>
+    <text x="44" y="565" fill="#666">Claude API で1〜2文に要約してから入れる</text>
+  </g>
+
+  <!-- 左：手動取り込み -->
+  <line x1="30" y1="596" x2="410" y2="596" stroke="#bbb" stroke-dasharray="4 4"/>
+  <text x="30" y="618" font-size="13" font-weight="700" fill="#888">一度だけ取り込んだもの（以後は自動で更新されない）</text>
+  <g font-size="12" fill="#555">
+    <rect x="30" y="630" width="380" height="70" rx="8" fill="#f2f2f2" stroke="#999" stroke-dasharray="6 4"/>
+    <text x="44" y="653" font-size="15" font-weight="700" fill="#444">⑥ Canva の自己紹介</text>
+    <text x="44" y="674">→ スキル・経験・できること・やりたいこと・趣味など</text>
+    <text x="44" y="691">（約68名分。2026年7月）</text>
+
+    <rect x="30" y="710" width="380" height="70" rx="8" fill="#f2f2f2" stroke="#999" stroke-dasharray="6 4"/>
+    <text x="44" y="733" font-size="15" font-weight="700" fill="#444">⑦ 卒業アンケート（スプシ）</text>
+    <text x="44" y="754">→ 残り活動期間・継続意向・引き継ぎ要否</text>
+    <text x="44" y="771">（約29名分。2026年9月）</text>
+
+    <rect x="30" y="790" width="380" height="70" rx="8" fill="#f2f2f2" stroke="#999" stroke-dasharray="6 4"/>
+    <text x="44" y="813" font-size="15" font-weight="700" fill="#444">⑧ Zoom 土曜定例（未連携）</text>
+    <text x="44" y="834">出席率は今は報酬タブで手入力</text>
+    <text x="44" y="851">（API連携は Pro プランが前提で保留中）</text>
+  </g>
+
+  <!-- 中央：Supabase -->
+  <rect x="540" y="250" width="340" height="250" rx="12" fill="#fff" stroke="#333" stroke-width="2"/>
+  <text x="710" y="284" font-size="18" font-weight="700" text-anchor="middle" fill="#222">Supabase</text>
+  <text x="710" y="310" font-size="16" font-weight="700" text-anchor="middle" fill="#222">org_state（id='main'）</text>
+  <text x="710" y="334" font-size="12" text-anchor="middle" fill="#666">すべてのデータが入った JSON 1行</text>
+  <g font-size="12" fill="#333">
+    <text x="560" y="364">・members／memberOverrides（人の情報）</text>
+    <text x="560" y="384">・projects（PJ・メンター・学生・定員）</text>
+    <text x="560" y="404">・departments（部署・グループ）／schools</text>
+    <text x="560" y="424">・paidGroups（有償枠）</text>
+    <text x="560" y="444">・compensation（報酬の月ごとの入力）</text>
+    <text x="560" y="464">・recruitment／recruitIntake（取り込み記録）</text>
+  </g>
+  <text x="710" y="490" font-size="11" text-anchor="middle" fill="#888">Edge Function が丸ごと読んで、丸ごと書き戻す</text>
+
+  <!-- 自動の矢印（左→中央） -->
+  <g stroke="#2f6fb5" stroke-width="2" fill="none" marker-end="url(#aIn)">
+    <path d="M410,161 C480,161 480,300 538,300"/>
+    <path d="M410,249 C480,249 480,330 538,330"/>
+    <path d="M410,337 C480,337 480,360 538,360"/>
+    <path d="M410,433 C480,433 480,400 538,400"/>
+    <path d="M410,529 C480,529 480,440 538,440"/>
+  </g>
+  <!-- 手動の矢印 -->
+  <g stroke="#999" stroke-width="1.6" fill="none" stroke-dasharray="6 4" marker-end="url(#aMan)">
+    <path d="M410,665 C490,665 500,480 600,500"/>
+    <path d="M410,745 C500,745 520,500 640,500"/>
+  </g>
+  <path d="M410,825 C470,825 470,825 520,825" stroke="#ccc" stroke-width="1.6" fill="none" stroke-dasharray="2 4"/>
+  <text x="440" y="815" font-size="11" fill="#999">未接続</text>
+
+  <!-- 右：書き出し先 -->
+  <g font-size="12" fill="#333">
+    <rect x="1010" y="118" width="360" height="160" rx="8" fill="#ebf6ee" stroke="#2f7d4a"/>
+    <text x="1024" y="141" font-size="15" font-weight="700">Ⓐ バックアップブック（本番用）</text>
+    <text x="1024" y="162">sheets-backup ／ 毎日 3:00</text>
+    <text x="1024" y="184">・生データ履歴（JSON全体を毎日追記）</text>
+    <text x="1024" y="202">・メンバー一覧</text>
+    <text x="1024" y="220">・プロジェクト一覧</text>
+    <text x="1024" y="238">・コミュニティ運営一覧</text>
+    <text x="1024" y="256">・アサイン一覧</text>
+    <text x="1024" y="272" fill="#666">（毎回消して書き直し＝読み取り専用の写し）</text>
+
+    <rect x="1010" y="292" width="360" height="70" rx="8" fill="#ebf6ee" stroke="#2f7d4a"/>
+    <text x="1024" y="315" font-size="15" font-weight="700">Ⓑ 同じブックの「エリア別一覧」</text>
+    <text x="1024" y="336">sheets-area-list ／ 毎日 3:10</text>
+    <text x="1024" y="354">エリア×有償／無償の名簿</text>
+
+    <rect x="1010" y="376" width="360" height="86" rx="8" fill="#ebf6ee" stroke="#2f7d4a"/>
+    <text x="1024" y="399" font-size="15" font-weight="700">Ⓒ 報酬ブック（月ごとに1冊）</text>
+    <text x="1024" y="420">sheets-pay-export ／ 報酬タブのボタン</text>
+    <text x="1024" y="439">8月・9月・10月のブックが作られている</text>
+    <text x="1024" y="455" fill="#666">ブックIDは compensation.exportSheets に記録</text>
+  </g>
+  <g stroke="#2f7d4a" stroke-width="2" fill="none" marker-end="url(#aOut)">
+    <path d="M882,300 C950,300 950,198 1008,198"/>
+    <path d="M882,340 C950,340 950,327 1008,327"/>
+    <path d="M882,400 C950,400 950,419 1008,419"/>
+  </g>
+
+  <!-- 下：アプリ -->
+  <rect x="540" y="600" width="340" height="190" rx="12" fill="#fff7e6" stroke="#8a5a00" stroke-width="2"/>
+  <text x="710" y="632" font-size="17" font-weight="700" text-anchor="middle" fill="#5a3a00">アプリ（index.html／Vercel）</text>
+  <text x="710" y="652" font-size="12" text-anchor="middle" fill="#8a5a00">?key= で member／core／admin</text>
+  <g font-size="12" fill="#333">
+    <text x="556" y="680">人が手で入力・編集しているもの：</text>
+    <text x="556" y="700">・アサイン（PJ・部署・スクール・有償枠）</text>
+    <text x="556" y="718">・プロフィール・エリア・業務委託契約</text>
+    <text x="556" y="736">・報酬入力（360°・出席率・リファ・調整）</text>
+    <text x="556" y="760" fill="#666">ボタンで ④⑤ の取り込みや Ⓒ の書き出しも起動</text>
+  </g>
+  <path d="M710,598 L710,504" stroke="#8a5a00" stroke-width="2.5" fill="none" marker-start="url(#aApp)" marker-end="url(#aApp)"/>
+  <text x="722" y="556" font-size="12" fill="#8a5a00">読み込み／保存</text>
+  <text x="722" y="572" font-size="11" fill="#8a5a00">（保存は core 以上）</text>
+
+  <!-- 補足 -->
+  <rect x="1010" y="600" width="360" height="190" rx="8" fill="#fff" stroke="#ddd"/>
+  <text x="1024" y="626" font-size="14" font-weight="700" fill="#444">押さえておく点</text>
+  <g font-size="12" fill="#444">
+    <text x="1024" y="650">・今の「正」は Supabase。スプシは</text>
+    <text x="1036" y="667">取り込み元か、書き出した写し</text>
+    <text x="1024" y="691">・人の突き合わせは全部「氏名」で、</text>
+    <text x="1036" y="708">﨑／崎などの表記ゆれを各所で吸収</text>
+    <text x="1024" y="732">・スプシ→アプリは「足すだけ」が多い</text>
+    <text x="1036" y="749">（シートで消してもアプリからは消えない）</text>
+    <text x="1024" y="773">・GCPのbot 1つで全シートにアクセス</text>
+  </g>
+
+  <text x="30" y="910" font-size="11" fill="#999">補助用の関数（sheets-read／sheets-write-range／gcp-diag）はアプリからは呼ばれていない。dev は cron 停止中・書き出し先は dev 用ブック。</text>
+</svg>
