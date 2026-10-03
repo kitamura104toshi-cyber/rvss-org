@@ -102,7 +102,8 @@ bot が作ると持ち主が bot になるため。
 | マネージャー | `isManager` |
 | 調整額 | `adjust` |
 | 調整メモ | `adjustNote` |
-| 案件数に含める | `countAsProject` |
+| 役割 | `role`（報酬書き出しの「役割」列） |
+| 案件数に含める | `countAsProject`（空＝自動、○＝含める、×＝含めない） |
 | 想定稼働 | `assumedHours` |
 | 想定PJ稼働 | `assumedProjectHours`（「PJ名:時間、PJ名:時間」） |
 | 想定PJ稼働合計 | `assumedProjectHoursTotal` |
