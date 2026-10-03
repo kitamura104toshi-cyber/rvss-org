@@ -12,6 +12,12 @@
       "runtimeExecutable": "powershell",
       "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".claude/mention-inbox-dev.ps1"],
       "port": 3100
+    },
+    {
+      "name": "v2",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "Set-Location 'C:\\Users\\mr171\\claude\\RVSS\\組織管理v2'; & '.\\.claude\\static-server.ps1'"],
+      "port": 5174
     }
   ]
 }

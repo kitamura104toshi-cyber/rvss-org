@@ -100,34 +100,16 @@ cron は日付 `28-31` で仕掛け、日本時間が1日のときだけ実行�
 どのモードでもこの前提で計算し、有償枠だけを並べる（`payMonthIsAssumed`）。
 経過日数で引き伸ばす予想（`payForecastFactor`）はこれが無い月のための経路。
 
-## 開発環境で作業するとき
+## 開発環境（dev）は新システムになった
 
-`index.html` は1枚だけで、**dev用のファイルは無い。** 接続先は開いたURLで決まる。
-`.claude/launch.json` の `static` を起動して `localhost:5173` を開くと開発 Supabase。
-Vercel（rvss-org-zeta）は本番。devから本番へ反映される仕組みは無く、2つは完全に別。
+**2026-10-04 から、dev の Supabase（`vsqrgcsobweaupiabagu`）は新しいスプシ中心のシステムの本体。**
+本番の写しではない。コードは `../組織管理v2/`（別の git リポジトリ）にある。詳しくはそちらの CLAUDE.md。
 
-2026-10-03 に以下を実施済み。
-
-- 開発側の `org_state` を本番のスナップショットで入れ替えた（それまでのdevは9月中旬の状態）
-- 入れ替え前のdevは `org_state` の `id='backup-20261003-pre-refresh'` に退避してある
-- **開発側の cron 4本は全部停止**（`cron.alter_job(jobid, active := false)`。定義は残している）
-
-止めた理由は `recruitment-sync-5h`。5時間ごとに募集フォームからプロジェクトの
-メンター／学生を書き戻すので、devでアサインをいじると上書きされる。
-**devで作業するあいだは止めたままにする。**
-
-開発側の Edge Functions は 2026-10-03 に本番と同じ内容へ揃えた（10本）。
-**書き出し先だけは差し替えてある。** `sheets-backup` と `sheets-area-list` の
-`SPREADSHEET_ID` は dev 用ブック（`1j6rT…`）。本番から持ってくるときは
-このIDの差し替えを忘れないこと。他の関数は本番と同一で、読み取り元のシートも同じ。
-
-SQL関数 `archive_workload_hours` / `archive_workload_hours_auto` も dev に入れてある
-（アプリの取得ボタンが rpc で呼ぶため、無いとボタンが失敗する）。
-
-dev の `compensation.exportSheets` は外してある。本番の報酬ブック（8月/9月/10月）を
-devから上書きしないため。devで書き出すと新規ブックが作られる。
-
-dev にだけある関数：`debug-sheet-dump`、`deploy-probe`（疎通確認用。消してよい）。
-
-バックアップの書き出し先は本番とdevで別ブック（本番 `1Avaf…` / dev `1j6rT…`）。
-devの作業で本番のブックは汚れない。読み取り元のシート（募集フォーム・契約・intake）は共有。
+- **本番の作業の確認に dev を使わない。** dev のデータも関数も本番とは別物になった
+- dev の cron は動いている（5分ごとのスプシ同期を含む）。止めると新システムが止まる
+- この `index.html` を localhost で開くと、今も dev に接続する。**dev のデータを編集しないこと**
+  （新システムの名簿・報酬と食い違う）。本番の画面を見るなら rvss-org-zeta を開く
+- 2026-10-04 に dev を本番の写しで入れ替えてから分岐させた。入れ替え前の dev は
+  `org_state` の `id='backup-20261004-pre-v2'`、その前は `id='backup-20261003-pre-refresh'` に退避してある
+- dev から本番へ書く経路は無い。共有している取り込み元のシート（募集フォーム・契約・採用管理）は
+  新システムからは読むだけ
