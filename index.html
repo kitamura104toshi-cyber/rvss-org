@@ -916,6 +916,12 @@ function ensureFields(s) {
   // s.transition.members[氏名] = { group, status, note, updatedAt }
   if (!s.transition) s.transition = { members: {} };
   if (!s.transition.members) s.transition.members = {};
+  // 退会状況。退会扱いにすると memberOverrides は消えるので、離脱の記録はこちらに持つ。
+  // s.attrition.members[氏名] = { briefingAt, joinedAt, leftAt, leaveType, leaveReason, note }
+  // s.attrition.risks = [{ name, note }]（離脱リスクは自動判定せず手入力のみ）
+  if (!s.attrition) s.attrition = { members: {}, risks: [] };
+  if (!s.attrition.members) s.attrition.members = {};
+  if (!Array.isArray(s.attrition.risks)) s.attrition.risks = [];
   (s.projects || []).forEach(p => {
     p.mentors = normalizeMemberList(p.mentors);
     p.students = normalizeMemberList(p.students);
@@ -1064,6 +1070,7 @@ const BASE_TABS = [
   { id: "schools",   label: "スクール受講者",       minRole: "core" },
   { id: "paid",      label: "有償枠",               minRole: "core" },
   { id: "transition",label: "1on1・移行状況",       minRole: "core" },
+  { id: "attrition", label: "退会状況",             minRole: "core" },
   { id: "pay",       label: "報酬",                 minRole: "admin" },
 ];
 // core 以上は今までどおりプロジェクトタブから始める。member は先頭の全メンバー。
@@ -1216,6 +1223,12 @@ function renderContent() {
   } else if (currentTab === "transition") {
     tb.innerHTML = `<button class="btn primary" onclick="addTransitionMember()">+ 対象者を追加</button>`;
     el.innerHTML = renderTransition();
+  } else if (currentTab === "attrition") {
+    tb.innerHTML = `
+      <button class="btn primary" onclick="addAttritionMember()">+ 離脱者を記録</button>
+      <button class="btn" onclick="addAttritionRisk()" style="margin-left:6px">+ 離脱リスクを追加</button>
+    `;
+    el.innerHTML = renderAttrition();
   } else if (currentTab === "pay") {
     tb.innerHTML = `
       ${PAY_MODES.map(({ id, label }) => {
@@ -1446,6 +1459,327 @@ function renderTransition() {
     <div class="sync-note">有償枠からの移行1on1。ステータスとメモはコアメンが直接書き換えられます・全${names.length}名</div>
     <div style="margin-bottom:14px;line-height:2">${summary}</div>
     <div class="grid">${cards}</div>
+  `;
+}
+
+// ====== 退会状況（コアメン以上） ======
+// 定義は「退会状況タブ_要件.md」に合わせてある。
+//   在籍の起点は説明会参加日。説明会に出ていない人は分母に入れない。
+//   「飛び」（説明会前の離脱）は分母に入っていないので、退会率には混ぜず別枠で数える。
+// 日付は "YYYY-MM-DD" に正規化して文字列のまま比べる（タイムゾーンでずれないため）。
+const ATTRITION_TYPES = ["自主退会", "基準退会", "飛び"];
+// 退会率に数えるのは自主退会と基準退会だけ
+const ATTRITION_COUNTED = ["自主退会", "基準退会"];
+const ATTRITION_TYPE_STYLE = {
+  "自主退会": "background:var(--pink);color:var(--pink-text)",
+  "基準退会": "background:var(--orange);color:var(--orange-text)",
+  "飛び":     "background:#f0eee7;color:var(--muted)",
+};
+let attritionFilter = "all";
+
+function toYmd(v) {
+  const m = String(v || "").trim().match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  return m ? `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}` : "";
+}
+function ymdLabel(ymd) {
+  const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${Number(m[2])}/${Number(m[3])}` : "";
+}
+function thisMonthKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function attritionMembers() { return ((state.attrition || {}).members) || {}; }
+// 入会日は採用管理シート由来の memberOverrides.joinedAt も拾う。
+// 退会扱いにすると override は消えるので、そのときは attrition 側に写してある。
+function attritionEntry(name) {
+  const e = attritionMembers()[name] || {};
+  const mi = memberInfo(name) || {};
+  return {
+    briefingAt: toYmd(e.briefingAt),
+    joinedAt: toYmd(e.joinedAt || mi.joinedAt),
+    leftAt: toYmd(e.leftAt),
+    leaveType: e.leaveType || "",
+    leaveReason: e.leaveReason || "",
+    note: e.note || "",
+  };
+}
+// 集計対象。現役メンバーと退会者、記録だけ残っている人をまとめる（BSは除く）
+function attritionNames() {
+  const set = new Set();
+  Object.keys(buildMemberMap()).forEach(n => { if (!isBSMember(n)) set.add(n); });
+  (state.deletedMembers || []).forEach(n => set.add(n));
+  Object.keys(attritionMembers()).forEach(n => set.add(n));
+  return Array.from(set);
+}
+function attritionRows() {
+  return attritionNames().map(n => ({ name: n, ...attritionEntry(n) }));
+}
+
+// start / end は両端を含む
+function attritionStats(start, end) {
+  const rows = attritionRows();
+  const inPeriod = d => !!d && d >= start && d <= end;
+  // 期初在籍＝説明会参加が期初より前で、期初時点でまだ離脱していない人
+  const opening = rows.filter(r => r.briefingAt && r.briefingAt < start && (!r.leftAt || r.leftAt >= start));
+  const left = rows.filter(r => inPeriod(r.leftAt) && ATTRITION_COUNTED.includes(r.leaveType));
+  const byType = {};
+  ATTRITION_COUNTED.forEach(t => { byType[t] = left.filter(r => r.leaveType === t); });
+  return {
+    start, end,
+    opening: opening.length,
+    left, byType,
+    rate: opening.length ? left.length / opening.length : null,
+    skipped: rows.filter(r => inPeriod(r.leftAt) && r.leaveType === "飛び"),
+    joined: rows.filter(r => inPeriod(r.joinedAt)).length,
+  };
+}
+function monthRange(key) {
+  const [y, m] = key.split("-").map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return { key, start: `${key}-01`, end: `${key}-${String(last).padStart(2, "0")}`, label: `${y}年${m}月` };
+}
+// 月内を月曜〜日曜で切る。月初の週は1日から始まる短い週になる（10/1〜10/4 の形）。
+// 10月第1週を10/1〜10/7で見るなら、ここを7日固定にする。
+function weekRanges(monthKey) {
+  const [y, m] = monthKey.split("-").map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  const out = [];
+  let d = 1;
+  while (d <= lastDay) {
+    const dow = new Date(y, m - 1, d).getDay();           // 0=日
+    const e = Math.min(d + (dow === 0 ? 0 : 7 - dow), lastDay);
+    out.push({
+      key: `w:${monthKey}-${String(d).padStart(2, "0")}`,
+      start: `${monthKey}-${String(d).padStart(2, "0")}`,
+      end: `${monthKey}-${String(e).padStart(2, "0")}`,
+      label: `${m}/${d}〜${m}/${e}`,
+    });
+    d = e + 1;
+  }
+  return out;
+}
+function attritionMonthKeys() {
+  const keys = new Set([thisMonthKey()]);
+  attritionRows().forEach(r => {
+    [r.briefingAt, r.joinedAt, r.leftAt].forEach(d => { if (d) keys.add(d.slice(0, 7)); });
+  });
+  return Array.from(keys).sort();
+}
+
+function setAttritionField(name, field, value) {
+  if (!name) return;
+  if (!state.attrition) state.attrition = { members: {}, risks: [] };
+  if (!state.attrition.members) state.attrition.members = {};
+  const cur = state.attrition.members[name] || {};
+  state.attrition.members[name] = { ...cur, [field]: value, updatedAt: new Date().toISOString() };
+  const y = window.scrollY;
+  save(); render();
+  window.scrollTo(0, y);
+}
+function editAttritionDate(name, field, title) {
+  const cur = attritionEntry(name)[field] || "";
+  inputDialog(`${name} の${title}（YYYY-MM-DD・空欄で消去）`, cur, v => {
+    const t = String(v || "").trim();
+    if (!t) { setAttritionField(name, field, ""); return; }
+    const ymd = toYmd(t);
+    if (!ymd) { setStatus("❌ 日付は 2026-10-01 の形で入れてください", "#b73a4a"); return; }
+    setAttritionField(name, field, ymd);
+  });
+}
+function editAttritionReason(name) {
+  inputDialog(`${name} の離脱理由`, attritionEntry(name).leaveReason, v => setAttritionField(name, "leaveReason", v));
+}
+function editAttritionNote(name) {
+  inputDialog(`${name} の対応状況・メモ`, attritionEntry(name).note, v => setAttritionField(name, "note", v));
+}
+function addAttritionMember() {
+  pickMember("離脱者として記録する人", name => editAttritionDate(name, "leftAt", "離脱日"));
+}
+function addAttritionRisk() {
+  pickMember("離脱リスクのある人（自動判定はしません）", name => {
+    if (!state.attrition.risks.some(r => r.name === name)) state.attrition.risks.push({ name, note: "" });
+    save(); render();
+  }, (state.attrition.risks || []).map(r => r.name));
+}
+function editAttritionRisk(name) {
+  const cur = (state.attrition.risks.find(r => r.name === name) || {}).note || "";
+  inputDialog(`${name} の気になっていること`, cur, v => {
+    const r = state.attrition.risks.find(x => x.name === name);
+    if (r) r.note = v;
+    save(); render();
+  });
+}
+function removeAttritionRisk(name) {
+  state.attrition.risks = (state.attrition.risks || []).filter(r => r.name !== name);
+  save(); render();
+}
+function setAttritionFilter(v) { attritionFilter = v; render(); }
+
+function attritionRateLabel(s) {
+  if (s.rate === null) return "—";
+  return `${(s.rate * 100).toFixed(1)}%`;
+}
+function attritionNameTags(rows, withType) {
+  if (rows.length === 0) return `<span style="color:var(--muted)">—</span>`;
+  return rows.map(r => {
+    const t = withType && r.leaveType ? `（${r.leaveType}）` : "";
+    return `<span class="tag name-link" style="background:#f5f3ed;color:var(--text)" onclick="goToMemberCard(${jsArg(r.name)})">${escapeHtml(r.name + t)}</span>`;
+  }).join(" ");
+}
+// 期間のカード。率は人数と名前の添え物として出す（1人で大きく動くため）
+function attritionSummaryCard(title, s, note) {
+  const counted = ATTRITION_COUNTED.map(t => `${t} ${s.byType[t].length}`).join(" ／ ");
+  return `
+    <div class="card">
+      <div class="card-head"><div class="card-title" style="font-size:14px">${escapeHtml(title)}</div>
+        <span class="count-pill">${ymdLabel(s.start)}〜${ymdLabel(s.end)}</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:baseline;margin-bottom:8px">
+        <div><div style="font-size:11px;color:var(--muted)">期初在籍</div><div style="font-size:22px;font-weight:700">${s.opening}</div></div>
+        <div><div style="font-size:11px;color:var(--muted)">離脱</div><div style="font-size:22px;font-weight:700">${s.left.length}</div></div>
+        <div><div style="font-size:11px;color:var(--muted)">退会率</div><div style="font-size:22px;font-weight:700">${attritionRateLabel(s)}</div></div>
+        <div><div style="font-size:11px;color:var(--muted)">飛び</div><div style="font-size:22px;font-weight:700">${s.skipped.length}</div></div>
+        <div><div style="font-size:11px;color:var(--muted)">入会（参考）</div><div style="font-size:22px;font-weight:700">${s.joined}</div></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${escapeHtml(counted)}</div>
+      <div class="section-label">離脱者</div><div style="line-height:2">${attritionNameTags(s.left, true)}</div>
+      <div class="section-label">飛び</div><div style="line-height:2">${attritionNameTags(s.skipped, false)}</div>
+      ${note ? `<div style="font-size:11px;color:var(--orange-text);margin-top:8px">${escapeHtml(note)}</div>` : ""}
+    </div>
+  `;
+}
+function attritionTable(title, ranges) {
+  const head = ["期間", "期初在籍", "自主退会", "基準退会", "離脱合計", "退会率", "飛び", "入会"];
+  const body = ranges.map(r => {
+    const s = attritionStats(r.start, r.end);
+    const cells = [r.label, s.opening, s.byType["自主退会"].length, s.byType["基準退会"].length,
+      s.left.length, attritionRateLabel(s), s.skipped.length, s.joined];
+    return `<tr>${cells.map((c, i) =>
+      `<td style="padding:6px 10px;border-top:1px solid var(--border);${i ? "text-align:right" : "font-weight:600"}">${escapeHtml(String(c))}</td>`
+    ).join("")}</tr>`;
+  }).join("");
+  return `
+    <div class="card">
+      <div class="card-title" style="font-size:14px;margin-bottom:8px">${escapeHtml(title)}</div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr>${head.map((h, i) =>
+          `<th style="padding:6px 10px;color:var(--muted);font-weight:600;${i ? "text-align:right" : "text-align:left"}">${escapeHtml(h)}</th>`
+        ).join("")}</tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>
+    </div>
+  `;
+}
+function attritionTypeSelect(name, current) {
+  const opts = [""].concat(ATTRITION_TYPES).map(t =>
+    `<option value="${escapeHtml(t)}"${t === current ? " selected" : ""}>${escapeHtml(t || "区分未入力")}</option>`).join("");
+  const style = ATTRITION_TYPE_STYLE[current] || "background:#fff;color:var(--muted);border:1px solid var(--border)";
+  return `<select class="recruit-select" style="${style}" onchange="setAttritionField(${jsArg(name)},'leaveType',this.value)">${opts}</select>`;
+}
+function attritionPersonRow(r, cols) {
+  const assign = (buildMemberMap()[r.name] || {});
+  const pjs = [...(assign.pjs || []), ...(assign.depts || [])];
+  const assignLabel = (state.deletedMembers || []).includes(r.name) ? "退会済み"
+    : pjs.length ? pjs.map(coarseAssignName).filter(Boolean).join("・") : "未アサイン";
+  const cell = v => `<td style="padding:6px 10px;border-top:1px solid var(--border);vertical-align:top">${v}</td>`;
+  const dateCell = (field, label) =>
+    cell(`<span style="cursor:pointer;color:${r[field] ? "var(--text)" : "var(--accent)"}" onclick="editAttritionDate(${jsArg(r.name)},'${field}','${label}')">${r[field] ? escapeHtml(ymdLabel(r[field])) : "入力"}</span>`);
+  const out = [
+    cell(`<span class="name-link" style="font-weight:600" onclick="goToMemberCard(${jsArg(r.name)})">${escapeHtml(r.name)}</span>`),
+  ];
+  if (cols.includes("joinedAt")) out.push(dateCell("joinedAt", "入会日"));
+  if (cols.includes("briefingAt")) out.push(dateCell("briefingAt", "説明会参加日"));
+  if (cols.includes("leftAt")) out.push(dateCell("leftAt", "離脱日"));
+  if (cols.includes("type")) out.push(cell(attritionTypeSelect(r.name, r.leaveType)));
+  if (cols.includes("reason")) out.push(cell(`<span style="cursor:pointer;color:${r.leaveReason ? "var(--text)" : "var(--accent)"}" onclick="editAttritionReason(${jsArg(r.name)})">${r.leaveReason ? escapeHtml(r.leaveReason) : "書く"}</span>`));
+  if (cols.includes("note")) out.push(cell(`<span style="cursor:pointer;color:${r.note ? "var(--text)" : "var(--accent)"}" onclick="editAttritionNote(${jsArg(r.name)})">${r.note ? escapeHtml(r.note) : "書く"}</span>`));
+  if (cols.includes("assign")) out.push(cell(`<span style="font-size:11px;color:var(--muted)">${escapeHtml(assignLabel)}</span>`));
+  return `<tr>${out.join("")}</tr>`;
+}
+function attritionPersonTable(title, headers, cols, rows, empty) {
+  if (rows.length === 0) return `<div class="card"><div class="card-title" style="font-size:14px">${escapeHtml(title)}</div><div class="sync-note" style="margin:8px 0 0">${escapeHtml(empty)}</div></div>`;
+  return `
+    <div class="card">
+      <div class="card-head"><div class="card-title" style="font-size:14px">${escapeHtml(title)}</div><span class="count-pill">${rows.length}名</span></div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr>${headers.map(h => `<th style="padding:6px 10px;text-align:left;color:var(--muted);font-weight:600">${escapeHtml(h)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map(r => attritionPersonRow(r, cols)).join("")}</tbody>
+      </table></div>
+    </div>
+  `;
+}
+
+function renderAttrition() {
+  const months = attritionMonthKeys();
+  const cur = thisMonthKey();
+  const weeks = weekRanges(cur);
+  const rows = attritionRows();
+
+  // 絞り込みの選択肢。既定は全期間。
+  const options = [{ key: "all", label: "全期間", start: "0000-01-01", end: "9999-12-31" }]
+    .concat(months.map(m => ({ ...monthRange(m), key: `m:${m}` })).reverse())
+    .concat(weeks.map(w => ({ ...w, label: `${w.label}（週）` })).reverse());
+  const sel = options.find(o => o.key === attritionFilter) || options[0];
+
+  // 分母に入らない人＝説明会参加日が未入力の人。率が実際より高く出るので先に見せる。
+  const noBriefing = rows.filter(r => !r.briefingAt && !r.leftAt);
+  const leftNoDate = rows.filter(r => !r.leftAt && (state.deletedMembers || []).includes(r.name));
+  const leftNoType = rows.filter(r => r.leftAt && !r.leaveType);
+
+  const warn = [];
+  if (noBriefing.length) warn.push(`説明会参加日が未入力 ${noBriefing.length}名（在籍の分母に入りません）`);
+  if (leftNoDate.length) warn.push(`離脱日が未入力の退会者 ${leftNoDate.length}名（どの期間にも数えられません）`);
+  if (leftNoType.length) warn.push(`離脱区分が未入力 ${leftNoType.length}名`);
+
+  const thisMonth = monthRange(cur);
+  const lastWeek = weeks.filter(w => w.start <= toYmd(new Date().toISOString().slice(0, 10))).slice(-1)[0] || weeks[0];
+
+  const inSel = r => r.leftAt && r.leftAt >= sel.start && r.leftAt <= sel.end;
+  const leftList = rows.filter(r => inSel(r) && r.leaveType !== "飛び").sort((a, b) => b.leftAt.localeCompare(a.leftAt));
+  const skipList = rows.filter(r => inSel(r) && r.leaveType === "飛び").sort((a, b) => b.leftAt.localeCompare(a.leftAt));
+
+  const risks = (state.attrition.risks || []);
+  const riskCard = `
+    <div class="card">
+      <div class="card-head"><div class="card-title" style="font-size:14px">離脱リスク（手入力）</div><span class="count-pill">${risks.length}名</span></div>
+      <div class="sync-note" style="margin:0 0 8px">自動判定はしません。気になる人を手で入れる欄です。</div>
+      ${risks.length === 0 ? `<div style="font-size:12px;color:var(--muted)">「+ 離脱リスクを追加」から登録してください。</div>`
+        : risks.map(r => `
+        <div style="padding:8px 0;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span class="tag name-link" style="background:#f5f3ed;color:var(--text);font-weight:600" onclick="goToMemberCard(${jsArg(r.name)})">${escapeHtml(r.name)}</span>
+          <span style="font-size:12px;color:${r.note ? "var(--text)" : "var(--accent)"};cursor:pointer" onclick="editAttritionRisk(${jsArg(r.name)})">${r.note ? escapeHtml(r.note) : "気になっていることを書く"}</span>
+          <span style="margin-left:auto;font-size:11px;color:var(--muted);cursor:pointer" onclick="removeAttritionRisk(${jsArg(r.name)})">外す</span>
+        </div>`).join("")}
+    </div>
+  `;
+
+  return `
+    <div class="sync-note">
+      在籍の起点は説明会参加日。説明会に出ていない人は分母に入れません。
+      飛び（説明会前の離脱）は退会率に含めず、別枠で人数と名前を出しています。
+    </div>
+    ${warn.length ? `<div class="warn" style="margin-bottom:12px">${warn.map(escapeHtml).join("／")}</div>` : ""}
+    <div class="grid" style="margin-bottom:16px">
+      ${attritionSummaryCard(`${thisMonth.label}（今月）`, attritionStats(thisMonth.start, thisMonth.end))}
+      ${attritionSummaryCard(`${lastWeek.label}（直近の週）`, attritionStats(lastWeek.start, lastWeek.end), "1週間分なので、率は参考程度に見てください")}
+    </div>
+    ${attritionTable("月次", months.map(monthRange).reverse())}
+    ${attritionTable(`週次（${cur.slice(5)}月）`, weeks.slice().reverse())}
+    <div style="margin:16px 0 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:12px;color:var(--muted)">一覧の期間</span>
+      <select class="recruit-select" style="background:#fff;border:1px solid var(--border);color:var(--text)" onchange="setAttritionFilter(this.value)">
+        ${options.map(o => `<option value="${escapeHtml(o.key)}"${o.key === sel.key ? " selected" : ""}>${escapeHtml(o.label)}</option>`).join("")}
+      </select>
+    </div>
+    ${attritionPersonTable("離脱者一覧", ["氏名", "離脱日", "区分", "理由", "アサイン状況"],
+      ["leftAt", "type", "reason", "assign"], leftList, "この期間の離脱者はいません。")}
+    ${attritionPersonTable("飛び一覧", ["氏名", "入会日", "離脱日", "理由", "対応状況"],
+      ["joinedAt", "leftAt", "reason", "note"], skipList, "この期間の飛びはいません。")}
+    ${attritionPersonTable("離脱日が未入力の退会者", ["氏名", "入会日", "離脱日", "区分", "理由"],
+      ["joinedAt", "leftAt", "type", "reason"], leftNoDate, "ありません。")}
+    ${attritionPersonTable("説明会参加日が未入力", ["氏名", "入会日", "説明会参加日", "アサイン状況"],
+      ["joinedAt", "briefingAt", "assign"], noBriefing, "全員入力済みです。")}
+    ${riskCard}
   `;
 }
 
@@ -3827,6 +4161,19 @@ function deleteMember(name) {
       if (s.subTl === name) s.subTl = "";
       s.students = s.students.filter(n => n !== name);
     });
+    // 退会状況タブ用に離脱の記録を残す。override はこのあと消えるので、
+    // 入会日・説明会参加日はここで写しておく。区分は推測せず空のままにする。
+    const mi = (state.memberOverrides || {})[name] || {};
+    if (!state.attrition) state.attrition = { members: {}, risks: [] };
+    if (!state.attrition.members) state.attrition.members = {};
+    const prev = state.attrition.members[name] || {};
+    state.attrition.members[name] = {
+      ...prev,
+      joinedAt: prev.joinedAt || toYmd(mi.joinedAt),
+      briefingAt: prev.briefingAt || toYmd(mi.briefingAt),
+      leftAt: prev.leftAt || new Date().toISOString().slice(0, 10),
+      updatedAt: new Date().toISOString(),
+    };
     if (state.memberOverrides && state.memberOverrides[name]) delete state.memberOverrides[name];
     save(); render();
   });
