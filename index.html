@@ -1510,11 +1510,13 @@ function attritionEntry(name) {
   };
 }
 // 集計対象。現役メンバーと退会者、記録だけ残っている人をまとめる（BSは除く）
+// 社会人メンター（BS）は在籍・退会の母集団ではないので、どの経路から来ても外す。
 function attritionNames() {
   const set = new Set();
-  Object.keys(buildMemberMap()).forEach(n => { if (!isBSMember(n)) set.add(n); });
-  (state.deletedMembers || []).forEach(n => set.add(n));
-  Object.keys(attritionMembers()).forEach(n => set.add(n));
+  const add = n => { if (n && !isBSMember(n)) set.add(n); };
+  Object.keys(buildMemberMap()).forEach(add);
+  (state.deletedMembers || []).forEach(add);
+  Object.keys(attritionMembers()).forEach(add);
   return Array.from(set);
 }
 function attritionRows() {
@@ -1527,8 +1529,9 @@ const ATTRITION_BASES = {
   briefing: { label: "説明会参加日", field: "briefingAt" },
   enrolled: { label: "参画日（名簿）", field: "enrolledAt" },
 };
+// 既定は参画日。説明会は2026年8月末からしか無く、それ以前の月の分母が立たないため。
 function attritionBasis() {
-  return ATTRITION_BASES[(state.attrition || {}).basis] ? state.attrition.basis : "briefing";
+  return ATTRITION_BASES[(state.attrition || {}).basis] ? state.attrition.basis : "enrolled";
 }
 function setAttritionBasis(v) {
   if (!ATTRITION_BASES[v]) return;
@@ -3886,6 +3889,7 @@ function renderMemberCard(n, info) {
           ${(info.schools||[]).map(s=>`<span class="tag" style="background:var(--purple);color:var(--purple-text)">スクール:${escapeHtml(s)}</span>`).join(" ")}
         ` : ""}
       </div>
+      ${showAdmin ? memberBasicsHTML(n, mi) : ""}
       ${showAdmin ? contractRemainingHTML(mi) : ""}
       ${showAdmin ? workloadHTML(mi) : ""}
       ${profileField("趣味", mi.hobby)}
@@ -4295,6 +4299,27 @@ function contractRemainingHTML(mi) {
   `;
 }
 // 前月稼働時間（Notionの稼働管理表と連携して自動反映される想定。手動編集も可）
+// メアドと参画日。メンバー名簿メアドから取り込んだもので、出すのはコアメン以上だけ。
+// 値が無い行は作らない（「未設定」が並ぶと読みにくいため）。
+function memberBasicsHTML(name, mi) {
+  const enrolled = toYmd((((state.attrition || {}).members || {})[name] || {}).enrolledAt);
+  const rows = [
+    ["個人メアド", (mi.personalEmail || "").trim()],
+    ["RVSSメアド", (mi.rvssEmail || "").trim()],
+    ["参画日", enrolled ? enrolled.replace(/-/g, "/") : ""],
+  ].filter(r => r[1]);
+  if (rows.length === 0) return "";
+  return `
+    <div class="section-label">基本情報</div>
+    <div style="font-size:12px;line-height:1.9;margin-bottom:10px">
+      ${rows.map(([k, v]) => `
+        <div style="display:flex;gap:10px">
+          <span style="color:var(--muted);min-width:82px;flex:none">${escapeHtml(k)}</span>
+          <span style="word-break:break-all">${escapeHtml(v)}</span>
+        </div>`).join("")}
+    </div>
+  `;
+}
 // 稼働時間はNotionから取り込んだものなので、どの月の値かを見出しに出す。
 // 月初は取り込みがまだ終わっていないことがあり、「前月」と実体がずれる。
 function workloadHTML(mi) {
