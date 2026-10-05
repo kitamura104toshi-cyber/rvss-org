@@ -1497,6 +1497,9 @@ function attritionEntry(name) {
   const mi = memberInfo(name) || {};
   return {
     briefingAt: toYmd(e.briefingAt),
+    // 参画日（メンバー名簿メアド）。説明会は8月末からしか無いので、
+    // それ以前の月の在籍を数えるにはこちらを起点にするしかない。
+    enrolledAt: toYmd(e.enrolledAt),
     joinedAt: toYmd(e.joinedAt || mi.joinedAt),
     leftAt: toYmd(e.leftAt),
     // 月までしか分かっていない記録。月次の集計は合うが、日付は仮なのでそう見せる
@@ -1518,12 +1521,29 @@ function attritionRows() {
   return attritionNames().map(n => ({ name: n, ...attritionEntry(n) }));
 }
 
+// 在籍の起点をどちらで数えるか。要件は説明会参加日だが、説明会は2026年8月末からしか
+// 実施していないので、それ以前の月は参画日（名簿）でないと分母が立たない。
+const ATTRITION_BASES = {
+  briefing: { label: "説明会参加日", field: "briefingAt" },
+  enrolled: { label: "参画日（名簿）", field: "enrolledAt" },
+};
+function attritionBasis() {
+  return ATTRITION_BASES[(state.attrition || {}).basis] ? state.attrition.basis : "briefing";
+}
+function setAttritionBasis(v) {
+  if (!ATTRITION_BASES[v]) return;
+  state.attrition.basis = v;
+  save(); render();
+}
+function attritionStartField() { return ATTRITION_BASES[attritionBasis()].field; }
+
 // start / end は両端を含む
 function attritionStats(start, end) {
   const rows = attritionRows();
   const inPeriod = d => !!d && d >= start && d <= end;
-  // 期初在籍＝説明会参加が期初より前で、期初時点でまだ離脱していない人
-  const opening = rows.filter(r => r.briefingAt && r.briefingAt < start && (!r.leftAt || r.leftAt >= start));
+  const f = attritionStartField();
+  // 期初在籍＝起点が期初より前で、期初時点でまだ離脱していない人
+  const opening = rows.filter(r => r[f] && r[f] < start && (!r.leftAt || r.leftAt >= start));
   const left = rows.filter(r => inPeriod(r.leftAt) && ATTRITION_COUNTED.includes(r.leaveType));
   const byType = {};
   ATTRITION_COUNTED.forEach(t => { byType[t] = left.filter(r => r.leaveType === t); });
@@ -1564,7 +1584,7 @@ function weekRanges(monthKey) {
 function attritionMonthKeys() {
   const keys = new Set([thisMonthKey()]);
   attritionRows().forEach(r => {
-    [r.briefingAt, r.joinedAt, r.leftAt].forEach(d => { if (d) keys.add(d.slice(0, 7)); });
+    [r.briefingAt, r.enrolledAt, r.joinedAt, r.leftAt].forEach(d => { if (d) keys.add(d.slice(0, 7)); });
   });
   return Array.from(keys).sort();
 }
@@ -1699,6 +1719,7 @@ function attritionPersonRow(r, cols) {
     cell(`<span class="name-link" style="font-weight:600" onclick="goToMemberCard(${jsArg(r.name)})">${escapeHtml(r.name)}</span>`),
   ];
   if (cols.includes("joinedAt")) out.push(dateCell("joinedAt", "入会日"));
+  if (cols.includes("enrolledAt")) out.push(dateCell("enrolledAt", "参画日"));
   if (cols.includes("briefingAt")) out.push(dateCell("briefingAt", "説明会参加日"));
   if (cols.includes("leftAt")) out.push(dateCell("leftAt", "離脱日"));
   if (cols.includes("type")) out.push(cell(attritionTypeSelect(r.name, r.leaveType)));
@@ -1732,13 +1753,16 @@ function renderAttrition() {
     .concat(weeks.map(w => ({ ...w, label: `${w.label}（週）` })).reverse());
   const sel = options.find(o => o.key === attritionFilter) || options[0];
 
-  // 分母に入らない人＝説明会参加日が未入力の人。率が実際より高く出るので先に見せる。
-  const noBriefing = rows.filter(r => !r.briefingAt && !r.leftAt);
+  // 分母に入らない人＝起点の日付が未入力の人。率が実際より高く出るので先に見せる。
+  const basis = attritionBasis();
+  const f = attritionStartField();
+  const basisLabel = ATTRITION_BASES[basis].label;
+  const noBriefing = rows.filter(r => !r[f] && !r.leftAt);
   const leftNoDate = rows.filter(r => !r.leftAt && (state.deletedMembers || []).includes(r.name));
   const leftNoType = rows.filter(r => r.leftAt && !r.leaveType);
 
   const warn = [];
-  if (noBriefing.length) warn.push(`説明会参加日が未入力 ${noBriefing.length}名（在籍の分母に入りません）`);
+  if (noBriefing.length) warn.push(`${basisLabel}が未入力 ${noBriefing.length}名（在籍の分母に入りません）`);
   if (leftNoDate.length) warn.push(`離脱日が未入力の退会者 ${leftNoDate.length}名（どの期間にも数えられません）`);
   if (leftNoType.length) warn.push(`離脱区分が未入力 ${leftNoType.length}名`);
 
@@ -1765,9 +1789,17 @@ function renderAttrition() {
   `;
 
   return `
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+      <span style="font-size:12px;color:var(--muted)">在籍の起点</span>
+      ${Object.entries(ATTRITION_BASES).map(([k, b]) => {
+        const on = k === basis;
+        return `<span class="tag" style="background:${on ? "#2a2a2a" : "#fff"};color:${on ? "#fff" : "var(--muted)"};border:1px solid ${on ? "#2a2a2a" : "var(--border)"};font-size:12px;padding:5px 12px;cursor:pointer;${on ? "font-weight:700" : ""}" onclick="setAttritionBasis('${k}')">${escapeHtml(b.label)}</span>`;
+      }).join("")}
+    </div>
     <div class="sync-note">
-      在籍の起点は説明会参加日。説明会に出ていない人は分母に入れません。
+      在籍の起点は${escapeHtml(basisLabel)}。起点が未入力の人は分母に入れません。
       飛び（説明会前の離脱）は退会率に含めず、別枠で人数と名前を出しています。
+      ${basis === "briefing" ? "説明会は2026年8月末からなので、それ以前の月は参画日に切り替えないと分母が立ちません。" : ""}
     </div>
     ${warn.length ? `<div class="warn" style="margin-bottom:12px">${warn.map(escapeHtml).join("／")}</div>` : ""}
     <div class="grid" style="margin-bottom:16px">
@@ -1788,8 +1820,8 @@ function renderAttrition() {
       ["joinedAt", "leftAt", "reason", "note"], skipList, "この期間の飛びはいません。")}
     ${attritionPersonTable("離脱日が未入力の退会者", ["氏名", "入会日", "離脱日", "区分", "理由"],
       ["joinedAt", "leftAt", "type", "reason"], leftNoDate, "ありません。")}
-    ${attritionPersonTable("説明会参加日が未入力", ["氏名", "入会日", "説明会参加日", "アサイン状況"],
-      ["joinedAt", "briefingAt", "assign"], noBriefing, "全員入力済みです。")}
+    ${attritionPersonTable(`${basisLabel}が未入力`, ["氏名", "参画日", "説明会参加日", "アサイン状況"],
+      ["enrolledAt", "briefingAt", "assign"], noBriefing, "全員入力済みです。")}
     ${riskCard}
   `;
 }
