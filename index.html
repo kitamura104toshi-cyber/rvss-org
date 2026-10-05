@@ -1499,6 +1499,8 @@ function attritionEntry(name) {
     briefingAt: toYmd(e.briefingAt),
     joinedAt: toYmd(e.joinedAt || mi.joinedAt),
     leftAt: toYmd(e.leftAt),
+    // 月までしか分かっていない記録。月次の集計は合うが、日付は仮なのでそう見せる
+    leftAtApprox: !!e.leftAtApprox,
     leaveType: e.leaveType || "",
     leaveReason: e.leaveReason || "",
     note: e.note || "",
@@ -1572,7 +1574,10 @@ function setAttritionField(name, field, value) {
   if (!state.attrition) state.attrition = { members: {}, risks: [] };
   if (!state.attrition.members) state.attrition.members = {};
   const cur = state.attrition.members[name] || {};
-  state.attrition.members[name] = { ...cur, [field]: value, updatedAt: new Date().toISOString() };
+  const next = { ...cur, [field]: value, updatedAt: new Date().toISOString() };
+  // 日付を人が入れ直したら「月だけ分かっている」印は外す
+  if (field === "leftAt") delete next.leftAtApprox;
+  state.attrition.members[name] = next;
   const y = window.scrollY;
   save(); render();
   window.scrollTo(0, y);
@@ -1682,8 +1687,14 @@ function attritionPersonRow(r, cols) {
   const assignLabel = (state.deletedMembers || []).includes(r.name) ? "退会済み"
     : pjs.length ? pjs.map(coarseAssignName).filter(Boolean).join("・") : "未アサイン";
   const cell = v => `<td style="padding:6px 10px;border-top:1px solid var(--border);vertical-align:top">${v}</td>`;
+  // 離脱日が「月だけ分かっている」記録は、仮の日付をそのまま見せない
+  const shown = field => {
+    if (!r[field]) return "入力";
+    if (field === "leftAt" && r.leftAtApprox) return `${Number(r.leftAt.slice(5, 7))}月ごろ`;
+    return ymdLabel(r[field]);
+  };
   const dateCell = (field, label) =>
-    cell(`<span style="cursor:pointer;color:${r[field] ? "var(--text)" : "var(--accent)"}" onclick="editAttritionDate(${jsArg(r.name)},'${field}','${label}')">${r[field] ? escapeHtml(ymdLabel(r[field])) : "入力"}</span>`);
+    cell(`<span style="cursor:pointer;color:${r[field] ? "var(--text)" : "var(--accent)"}" onclick="editAttritionDate(${jsArg(r.name)},'${field}','${label}')">${escapeHtml(shown(field))}</span>`);
   const out = [
     cell(`<span class="name-link" style="font-weight:600" onclick="goToMemberCard(${jsArg(r.name)})">${escapeHtml(r.name)}</span>`),
   ];
