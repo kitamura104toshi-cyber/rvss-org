@@ -1769,8 +1769,13 @@ function renderAttrition() {
   if (leftNoDate.length) warn.push(`離脱日が未入力の退会者 ${leftNoDate.length}名（どの期間にも数えられません）`);
   if (leftNoType.length) warn.push(`離脱区分が未入力 ${leftNoType.length}名`);
 
-  const thisMonth = monthRange(cur);
-  const lastWeek = weeks.filter(w => w.start <= toYmd(new Date().toISOString().slice(0, 10))).slice(-1)[0] || weeks[0];
+  // 見せるのは先月（確定した月）と今月の第1週。それ以前は会議で使わないので表には出さない。
+  const prev = (() => {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  })();
+  const lastMonth = monthRange(prev);
+  const firstWeek = weeks[0];
 
   const inSel = r => r.leftAt && r.leftAt >= sel.start && r.leftAt <= sel.end;
   const leftList = rows.filter(r => inSel(r) && r.leaveType !== "飛び").sort((a, b) => b.leftAt.localeCompare(a.leftAt));
@@ -1806,11 +1811,11 @@ function renderAttrition() {
     </div>
     ${warn.length ? `<div class="warn" style="margin-bottom:12px">${warn.map(escapeHtml).join("／")}</div>` : ""}
     <div class="grid" style="margin-bottom:16px">
-      ${attritionSummaryCard(`${thisMonth.label}（今月）`, attritionStats(thisMonth.start, thisMonth.end))}
-      ${attritionSummaryCard(`${lastWeek.label}（直近の週）`, attritionStats(lastWeek.start, lastWeek.end), "1週間分なので、率は参考程度に見てください")}
+      ${attritionSummaryCard(`${lastMonth.label}分`, attritionStats(lastMonth.start, lastMonth.end))}
+      ${attritionSummaryCard(`${Number(cur.slice(5))}月 第1週`, attritionStats(firstWeek.start, firstWeek.end), "1週間分なので、率は参考程度に見てください")}
     </div>
-    ${attritionTable("月次", months.map(monthRange).reverse())}
-    ${attritionTable(`週次（${cur.slice(5)}月）`, weeks.slice().reverse())}
+    ${attritionTable("月次（直近3ヶ月）", months.slice(-3).map(monthRange).reverse())}
+    ${attritionTable(`週次（${Number(cur.slice(5))}月）`, weeks.slice().reverse())}
     <div style="margin:16px 0 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span style="font-size:12px;color:var(--muted)">一覧の期間</span>
       <select class="recruit-select" style="background:#fff;border:1px solid var(--border);color:var(--text)" onchange="setAttritionFilter(this.value)">
