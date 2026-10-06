@@ -1556,7 +1556,9 @@ function attritionStats(start, end) {
     left, byType,
     rate: opening.length ? left.length / opening.length : null,
     skipped: rows.filter(r => inPeriod(r.leftAt) && r.leaveType === "飛び"),
-    joined: rows.filter(r => inPeriod(r.joinedAt)).length,
+    // 入会も在籍と同じ起点で数える。別の日付（採用合格日）で数えると
+    // 期初在籍＋入会−離脱＝翌期の期初在籍 が合わなくなる。
+    joined: rows.filter(r => inPeriod(r[f])).length,
   };
 }
 function monthRange(key) {
