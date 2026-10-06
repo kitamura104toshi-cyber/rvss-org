@@ -1646,6 +1646,59 @@ function removeAttritionRisk(name) {
 }
 function setAttritionFilter(v) { attritionFilter = v; render(); }
 
+// 基準退会の判定ライン。要件では現行75%だが、値は別途決める話になっているので上書きできる。
+// ここで出すのは「ラインを下回っている人」まで。退会にするかどうかは人が決める。
+const ATTRITION_ATTENDANCE_LINE_DEFAULT = 75;
+function attritionAttendanceLine() {
+  const v = (state.attrition || {}).attendanceLine;
+  return typeof v === "number" && v > 0 ? v : ATTRITION_ATTENDANCE_LINE_DEFAULT;
+}
+function editAttritionAttendanceLine() {
+  inputDialog("基準退会の出席率ライン（%）", String(attritionAttendanceLine()), v => {
+    const n = Number(String(v).replace(/[^0-9.]/g, ""));
+    if (!isFinite(n) || n <= 0 || n > 100) { setStatus("❌ 1〜100の数字で入れてください", "#b73a4a"); return; }
+    state.attrition.attendanceLine = n;
+    save(); render();
+  });
+}
+// 出席率は報酬側（compensation）に入っている。表記ゆれだけ吸収して引く。
+function attendanceRateOf(name) {
+  const m = ((state.compensation || {}).members) || {};
+  for (const k of [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")]) {
+    const v = (m[k] || {}).attendanceRate;
+    if (typeof v === "number") return v;
+  }
+  return null;
+}
+function attritionAttendanceCard(rows) {
+  const line = attritionAttendanceLine();
+  const active = rows.filter(r => !r.leftAt).map(r => ({ ...r, rate: attendanceRateOf(r.name) }));
+  const below = active.filter(r => r.rate !== null && r.rate < line).sort((a, b) => a.rate - b.rate);
+  const noRate = active.filter(r => r.rate === null);
+  const risks = new Set(((state.attrition || {}).risks || []).map(r => r.name));
+  const tag = r => {
+    const marked = risks.has(r.name) ? " ●" : "";
+    return `<span class="tag name-link" style="background:var(--orange);color:var(--orange-text)" onclick="goToMemberCard(${jsArg(r.name)})">${escapeHtml(r.name)} ${r.rate}%${marked}</span>`;
+  };
+  return `
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title" style="font-size:14px">基準退会ライン（出席率
+          <span style="cursor:pointer;color:var(--accent)" onclick="editAttritionAttendanceLine()">${line}%</span>
+          未満）</div>
+        <span class="count-pill">${below.length}名</span>
+      </div>
+      <div class="sync-note" style="margin:0 0 8px">
+        自動では退会にしません。該当者を出すだけです。●は離脱リスクに登録済み。
+        出席率は報酬タブと同じ値（2026-06-01〜2026-08-31の集計）です。
+      </div>
+      ${below.length ? `<div style="line-height:2.2">${below.map(tag).join(" ")}</div>`
+        : `<div style="font-size:12px;color:var(--muted)">ラインを下回っている人はいません。</div>`}
+      ${noRate.length ? `<div style="font-size:11px;color:var(--muted);margin-top:8px">出席率が未取得 ${noRate.length}名（判定できません）</div>` : ""}
+    </div>
+  `;
+}
+
 function attritionRateLabel(s) {
   if (s.rate === null) return "—";
   return `${(s.rate * 100).toFixed(1)}%`;
@@ -1832,6 +1885,7 @@ function renderAttrition() {
       ["joinedAt", "leftAt", "type", "reason"], leftNoDate, "ありません。")}
     ${attritionPersonTable(`${basisLabel}が未入力`, ["氏名", "参画日", "説明会参加日", "アサイン状況"],
       ["enrolledAt", "briefingAt", "assign"], noBriefing, "全員入力済みです。")}
+    ${attritionAttendanceCard(rows)}
     ${riskCard}
   `;
 }
