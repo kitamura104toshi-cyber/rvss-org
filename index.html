@@ -1489,6 +1489,11 @@ function thisMonthKey() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
+// 今日。toISOString はUTCなので、日本時間の0時〜9時に前日へずれる。手元の時計で組む。
+function todayYmd() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 function attritionMembers() { return ((state.attrition || {}).members) || {}; }
 // 入会日は採用管理シート由来の memberOverrides.joinedAt も拾う。
 // 退会扱いにすると override は消えるので、そのときは attrition 側に写してある。
@@ -1646,6 +1651,24 @@ function removeAttritionRisk(name) {
 }
 function setAttritionFilter(v) { attritionFilter = v; render(); }
 
+// 週カードの送り。null のあいだは「今日が入っている週」を出す。
+// 月をまたぐと週の本数が変わるので、添字は毎回クランプしてから使う。
+let attritionWeek = null;
+function attritionWeekIndex(weeks) {
+  if (weeks.length === 0) return 0;
+  if (attritionWeek === null) {
+    const today = todayYmd();
+    const i = weeks.findIndex(w => today >= w.start && today <= w.end);
+    return i < 0 ? 0 : i;
+  }
+  return Math.min(Math.max(attritionWeek, 0), weeks.length - 1);
+}
+function moveAttritionWeek(d) {
+  const weeks = weekRanges(thisMonthKey());
+  attritionWeek = Math.min(Math.max(attritionWeekIndex(weeks) + d, 0), weeks.length - 1);
+  render();
+}
+
 // 基準退会の判定ライン。要件では現行75%だが、値は別途決める話になっているので上書きできる。
 // ここで出すのは「ラインを下回っている人」まで。退会にするかどうかは人が決める。
 const ATTRITION_ATTENDANCE_LINE_DEFAULT = 75;
@@ -1714,12 +1737,21 @@ function attritionNameTags(rows, withType) {
     return `<span class="tag name-link" style="background:#f5f3ed;color:var(--text)" onclick="goToMemberCard(${jsArg(r.name)})">${escapeHtml(r.name + t)}</span>`;
   }).join(" ");
 }
+// 送りボタン。端では押せない見た目にして、押しても動かないようにする。
+function attritionPagerHTML(canPrev, canNext) {
+  const btn = (label, d, on) => `<span style="display:inline-flex;align-items:center;justify-content:center;
+    width:22px;height:22px;border:1px solid var(--border);border-radius:5px;font-size:12px;line-height:1;
+    color:${on ? "var(--text)" : "var(--border)"};background:#fff;${on ? "cursor:pointer" : ""}"
+    ${on ? `onclick="moveAttritionWeek(${d})"` : ""}>${label}</span>`;
+  return `<span style="display:inline-flex;gap:4px;margin-left:8px;vertical-align:middle">
+    ${btn("‹", -1, canPrev)}${btn("›", 1, canNext)}</span>`;
+}
 // 期間のカード。率は人数と名前の添え物として出す（1人で大きく動くため）
-function attritionSummaryCard(title, s, note) {
+function attritionSummaryCard(title, s, note, pager) {
   const counted = ATTRITION_COUNTED.map(t => `${t} ${s.byType[t].length}`).join(" ／ ");
   return `
     <div class="card">
-      <div class="card-head"><div class="card-title" style="font-size:14px">${escapeHtml(title)}</div>
+      <div class="card-head"><div class="card-title" style="font-size:14px">${escapeHtml(title)}${pager || ""}</div>
         <span class="count-pill">${ymdLabel(s.start)}〜${ymdLabel(s.end)}</span></div>
       <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:baseline;margin-bottom:8px">
         <div><div style="font-size:11px;color:var(--muted)">期初在籍</div><div style="font-size:22px;font-weight:700">${s.opening}</div></div>
@@ -1828,13 +1860,14 @@ function renderAttrition() {
   if (leftNoDate.length) warn.push(`離脱日が未入力の退会者 ${leftNoDate.length}名（どの期間にも数えられません）`);
   if (leftNoType.length) warn.push(`離脱区分が未入力 ${leftNoType.length}名`);
 
-  // 見せるのは先月（確定した月）と今月の第1週。それ以前は会議で使わないので表には出さない。
+  // 見せるのは先月（確定した月）と今月の1週分。それ以前は会議で使わないので表には出さない。
   const prev = (() => {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   })();
   const lastMonth = monthRange(prev);
-  const firstWeek = weeks[0];
+  const wi = attritionWeekIndex(weeks);
+  const week = weeks[wi];
 
   const inSel = r => r.leftAt && r.leftAt >= sel.start && r.leftAt <= sel.end;
   const leftList = rows.filter(r => inSel(r) && r.leaveType !== "飛び").sort((a, b) => b.leftAt.localeCompare(a.leftAt));
@@ -1871,7 +1904,10 @@ function renderAttrition() {
     ${warn.length ? `<div class="warn" style="margin-bottom:12px">${warn.map(escapeHtml).join("／")}</div>` : ""}
     <div class="grid" style="margin-bottom:16px">
       ${attritionSummaryCard(`${lastMonth.label}分`, attritionStats(lastMonth.start, lastMonth.end))}
-      ${attritionSummaryCard(`${Number(cur.slice(5))}月 第1週`, attritionStats(firstWeek.start, firstWeek.end), "1週間分なので、率は参考程度に見てください")}
+      ${attritionSummaryCard(`${Number(cur.slice(5))}月 第${wi + 1}週`,
+        attritionStats(week.start, week.end),
+        week.start > todayYmd() ? "まだ始まっていない週です" : "1週間分なので、率は参考程度に見てください",
+        attritionPagerHTML(wi > 0, wi < weeks.length - 1))}
     </div>
     ${attritionTable("月次（直近3ヶ月）", months.slice(-3).map(monthRange).reverse())}
     ${attritionTable(`週次（${Number(cur.slice(5))}月）`, weeks.slice().reverse())}
