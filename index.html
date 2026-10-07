@@ -2840,7 +2840,7 @@ function editPayMember(name) {
     <h3>${escapeHtml(name)} の報酬入力</h3>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">360°評価（四半期ごとに更新。未実施なら空欄）</label>
     <input id="pay-score" type="number" min="0" max="5" step="0.01" value="${pi.score360 != null ? pi.score360 : ""}" placeholder="例：3.25"/>
-    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">土曜定例の出席率（%）｜将来Zoom連携で自動化</label>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">土曜定例の出席率（%）${payAttendancePinned(name) ? "｜" + payMonthLabel() + "で固定中（この月だけ直ります）" : "｜最新の集計。全部の月に効きます"}</label>
     <input id="pay-att" type="number" min="0" max="100" step="0.1" value="${pi.attendanceRate != null ? pi.attendanceRate : ""}" placeholder="例：91.7"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">手動調整（円。マイナスも可）</label>
     <input id="pay-adjust" type="number" step="1000" value="${pi.adjust != null ? pi.adjust : ""}" placeholder="例：15000"/>
@@ -2882,6 +2882,14 @@ function payMemberKey(name) {
   for (const k of [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")]) if (m[k]) return k;
   return name;
 }
+// 出席率は「最新の集計」をメンバー直下に置き、締めた月は byMonth に焼き付けて固定する。
+// payInfoOf が byMonth を後から重ねるので、固定した月だけ当時の率で計算される。
+function payAttendancePinned(name, monthKey) {
+  const m = ((state.compensation || {}).members) || {};
+  const e = m[payMemberKey(name)];
+  const month = ((e || {}).byMonth || {})[monthKey || payMonthKey()];
+  return !!month && Object.prototype.hasOwnProperty.call(month, "attendanceRate");
+}
 function savePayMember(name) {
   const num = id => { const v = document.getElementById(id).value; return v === "" ? null : Number(v); };
   // 業務内容は月ごとに持つ。過去月のブックを出し直しても当時の記述が残るようにする。
@@ -2900,17 +2908,21 @@ function savePayMember(name) {
   month.adjust = num("pay-adjust") || 0;
   month.adjustNote = (document.getElementById("pay-adjust-note").value || "").trim();
   month.isManager = document.getElementById("pay-manager").checked;
+  // 出席率を固定している月は、その月の値だけを直す。
+  // メンバー直下は「最新の集計」なので、過去月を見ながら保存しても書き換わらないようにする。
+  const pinned = payAttendancePinned(name, payMonthKey());
+  if (pinned) month.attendanceRate = num("pay-att");
   byMonth[payMonthKey()] = month;
   const entry = {
     ...prev,
     score360: num("pay-score"),
-    attendanceRate: num("pay-att"),
     role: (document.getElementById("pay-role").value || "").trim(),
     workNotes,
     referral: document.getElementById("pay-referral").checked,
     school: document.getElementById("pay-school").checked,
     byMonth,
   };
+  if (!pinned) entry.attendanceRate = num("pay-att");
   // メンバー直下に残った月次値は全部の月に効いてしまうので落とす。
   PAY_MONTHLY_FIELDS.forEach(k => { delete entry[k]; });
   state.compensation.members[key] = entry;

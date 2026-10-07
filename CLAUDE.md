@@ -94,9 +94,18 @@ CSV（`attendance_payroll_YYYY-MM_開始_終了.csv`）を直近3ヶ月ぶんで
 入れる先は `compensation.members[氏名].attendanceRate`、集計期間は
 `compensation.attendancePeriod`（退会状況タブの注記がこれを出す）。
 
-**出席率は月スコープではない。** 入れ替えると過去月の計算も新しい率で動く。
-すでに書き出したスプレッドシートは変わらないが、同じ月を出し直すと
-ペナルティの行が変わる。月ごとに分けたいなら `byMonth` へ移す話になる。
+メンバー直下の値は「最新の集計」。**締めた月は `byMonth["YYYY-MM"].attendanceRate` に
+焼き付けて固定する。** `attendanceRate` は `PAY_MONTHLY_FIELDS` に入れていないので、
+固定していない月は直下の最新値が使われ、固定した月だけ当時の率で計算される。
+`null` を入れれば「当時は未入力」（ペナルティあり）も再現できる。
+
+**新しいCSVを入れる前に、締まった月を固定すること。** 入れ替えてから固定すると、
+確定済みの月の金額が動く。2026-09 は確定ブック
+（`1qrkqPe4cbg75ouBnSk9Hbiz_BfFbp8C05JZyDM0deyw` の報酬一覧）の
+「土曜定例出席率」列から焼き付けてある。
+
+報酬入力フォームは固定済みの月ではその月の値だけを直す（`payAttendancePinned`）。
+固定していない月なら直下の最新値を直す。
 
 CSVに載っていて報酬側に行が無い人は `attendanceRate` だけの行として足してよい。
 報酬タブの顔ぶれは `buildMemberMap()` で決まるので、行が増えても人は増えない。
