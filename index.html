@@ -1489,11 +1489,11 @@ function thisMonthKey() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
-// 今日。toISOString はUTCなので、日本時間の0時〜9時に前日へずれる。手元の時計で組む。
-function todayYmd() {
-  const d = new Date();
+// toISOString はUTCなので、日本時間の0時〜9時に前日へずれる。手元の時計で組む。
+function ymdOfDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+function todayYmd() { return ymdOfDate(new Date()); }
 function attritionMembers() { return ((state.attrition || {}).members) || {}; }
 // 入会日は採用管理シート由来の memberOverrides.joinedAt も拾う。
 // 退会扱いにすると override は消えるので、そのときは attrition 側に写してある。
@@ -1571,23 +1571,30 @@ function monthRange(key) {
   const last = new Date(y, m, 0).getDate();
   return { key, start: `${key}-01`, end: `${key}-${String(last).padStart(2, "0")}`, label: `${y}年${m}月` };
 }
-// 月内を1日から7日ずつで切る。第1週は 10/1〜10/7。
-// 曜日で切ると月初が10/1〜10/4のような短い週になり、10/5入会の3名が第1週から外れていた。
-// 会議では「月の第1週」として1〜7日を見ているので、暦の週ではなく日数で揃える。
+// 週は月曜はじまりの7日間。どの週も7日あるので、月末だけ短い週になることはない。
+// 月をまたぐ週は、7日のうち4日以上が入っているほうの月に数える。
+// 4日以上は必ずどちらか一方だけなので、週がどこにも入らない／両方に入ることはない。
+// そのぶん月次（暦の月）と週次の合計は一致しない。月次は1日〜月末のまま。
 function weekRanges(monthKey) {
   const [y, m] = monthKey.split("-").map(Number);
-  const lastDay = new Date(y, m, 0).getDate();
+  const mon = new Date(y, m - 1, 1);
+  mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));   // 1日を含む週の月曜
   const out = [];
-  let d = 1;
-  while (d <= lastDay) {
-    const e = Math.min(d + 6, lastDay);
+  for (let i = 0; i < 6; i++) {
+    const start = new Date(mon); start.setDate(mon.getDate() + i * 7);
+    const end = new Date(start); end.setDate(start.getDate() + 6);
+    let inMonth = 0;
+    for (let k = 0; k < 7; k++) {
+      const t = new Date(start); t.setDate(start.getDate() + k);
+      if (t.getFullYear() === y && t.getMonth() === m - 1) inMonth++;
+    }
+    if (inMonth < 4) continue;
     out.push({
-      key: `w:${monthKey}-${String(d).padStart(2, "0")}`,
-      start: `${monthKey}-${String(d).padStart(2, "0")}`,
-      end: `${monthKey}-${String(e).padStart(2, "0")}`,
-      label: `${m}/${d}〜${m}/${e}`,
+      key: `w:${ymdOfDate(start)}`,
+      start: ymdOfDate(start),
+      end: ymdOfDate(end),
+      label: `${start.getMonth() + 1}/${start.getDate()}〜${end.getMonth() + 1}/${end.getDate()}`,
     });
-    d = e + 1;
   }
   return out;
 }
