@@ -2412,7 +2412,7 @@ function payMonthKey() {
 // 人が作って bot に共有したブックのURLを貼れば、そこへ書き出す。
 function setPayExportSheetId() {
   inputDialog(
-    `${payMonthLabel()}分のブックのURL（bot に編集者で共有したもの）`,
+    `${payMonthLabel()}分の修正版ブックのURL（bot に編集者で共有したもの）`,
     payExportBookId(),
     v => {
       const raw = String(v || "").trim();
@@ -2558,16 +2558,26 @@ function renderPayBookView(snap) {
   `;
 }
 
+// 実際に支払ったときのブック。差額を出すのに要るので、修正版とは別に持っておく。
+function payPaidSheets() { return ((state.compensation || {}).paidSheets) || {}; }
+// 月ごとに「修正前（支払済）」と「修正版」を並べて出す。
+// 書き出しや取り込みが向くのは修正版だけ。修正前は開くだけで触らない。
 function payExportLinksHTML() {
-  const sheets = payExportSheets();
-  const months = Object.keys(sheets).filter(k => sheets[k]).sort().reverse();
+  const fixedBooks = payExportSheets();
+  const paidBooks = payPaidSheets();
+  const months = Array.from(new Set(Object.keys(fixedBooks).concat(Object.keys(paidBooks))))
+    .filter(k => fixedBooks[k] || paidBooks[k]).sort().reverse();
   const rewrite = `<span style="cursor:pointer;text-decoration:underline;margin-left:8px" onclick="rewritePayBook()">${payMonthLabel()}分をアプリの内容で書き直す</span>`;
   if (months.length === 0) return "未作成（「スプシを開く」で新規作成されます）";
-  return `<div style="display:grid;grid-template-columns:auto auto;gap:2px 14px;justify-content:start;margin-top:4px">${
+  const link = id => id
+    ? `<a href="https://docs.google.com/spreadsheets/d/${escapeHtml(id)}/edit" target="_blank" rel="noopener">開く</a>`
+    : `<span style="color:var(--muted)">—</span>`;
+  return `<div style="display:grid;grid-template-columns:auto auto auto;gap:2px 14px;justify-content:start;margin-top:4px">${
     months.map(k => {
       const [y, m] = k.split("-");
       return `<span>${Number(y)}年${Number(m)}月分</span>` +
-        `<a href="https://docs.google.com/spreadsheets/d/${escapeHtml(sheets[k])}/edit" target="_blank" rel="noopener">開く</a>`;
+        `<span>修正前 ${link(paidBooks[k])}</span>` +
+        `<span>修正版 ${link(fixedBooks[k])}</span>`;
     }).join("")
   }</div>${rewrite}`;
 }
