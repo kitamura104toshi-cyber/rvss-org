@@ -1566,16 +1566,16 @@ function monthRange(key) {
   const last = new Date(y, m, 0).getDate();
   return { key, start: `${key}-01`, end: `${key}-${String(last).padStart(2, "0")}`, label: `${y}年${m}月` };
 }
-// 月内を月曜〜日曜で切る。月初の週は1日から始まる短い週になる（10/1〜10/4 の形）。
-// 10月第1週を10/1〜10/7で見るなら、ここを7日固定にする。
+// 月内を1日から7日ずつで切る。第1週は 10/1〜10/7。
+// 曜日で切ると月初が10/1〜10/4のような短い週になり、10/5入会の3名が第1週から外れていた。
+// 会議では「月の第1週」として1〜7日を見ているので、暦の週ではなく日数で揃える。
 function weekRanges(monthKey) {
   const [y, m] = monthKey.split("-").map(Number);
   const lastDay = new Date(y, m, 0).getDate();
   const out = [];
   let d = 1;
   while (d <= lastDay) {
-    const dow = new Date(y, m - 1, d).getDay();           // 0=日
-    const e = Math.min(d + (dow === 0 ? 0 : 7 - dow), lastDay);
+    const e = Math.min(d + 6, lastDay);
     out.push({
       key: `w:${monthKey}-${String(d).padStart(2, "0")}`,
       start: `${monthKey}-${String(d).padStart(2, "0")}`,
