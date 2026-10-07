@@ -1235,9 +1235,12 @@ function renderContent() {
         const on = payMode === id;
         return `<span class="tag" style="background:${on?'#2a2a2a':'#fff'};color:${on?'#fff':'#6b6b6b'};border:1px solid ${on?'#2a2a2a':'#e5e3dc'};font-size:13px;padding:6px 14px;cursor:pointer;${on?'font-weight:700':''}" onclick="setPayMode('${id}')">${label}</span>`;
       }).join("")}
-      <button class="btn editor-only" id="pay-notion-btn" onclick="syncWorkNotesFromNotion()" style="margin-left:8px">Notionから稼働・業務内容を取得</button>
-      <button class="btn editor-only" id="pay-hours-btn" onclick="syncHoursFromNotion()" style="margin-left:8px">稼働時間だけ取り直す</button>
-      <button class="btn editor-only" id="pay-export-btn" onclick="exportPayToSheets()">スプシを開く</button>
+      ${payMonthPagerHTML()}
+      ${payBookSnapshot() ? "" : `
+        <button class="btn editor-only" id="pay-notion-btn" onclick="syncWorkNotesFromNotion()" style="margin-left:8px">Notionから稼働・業務内容を取得</button>
+        <button class="btn editor-only" id="pay-hours-btn" onclick="syncHoursFromNotion()" style="margin-left:8px">稼働時間だけ取り直す</button>
+        <button class="btn editor-only" id="pay-export-btn" onclick="exportPayToSheets()">スプシを開く</button>`}
+      <button class="btn editor-only" id="pay-book-btn" onclick="importPayBook()" style="margin-left:8px">スプシから取り込む</button>
     `;
     el.innerHTML = renderCompensation();
   } else if (currentTab === "all") {
@@ -2038,12 +2041,27 @@ const PAY_MODES = [
   { id: "next",     label: "来月分予想",   offset: 1 },
 ];
 let payMode = "actual";
+// 先月分確定からさらに何ヶ月さかのぼるか。確定済みの過去月（8月など）を見るための送り。
+// 予想の2モードは当月・翌月そのものなので、さかのぼりは確定モードだけに効かせる。
+let payBack = 0;
+const PAY_BACK_MAX = 12;
 function payIsForecast() { return payMode === "forecast"; }
 function payIsNext() { return payMode === "next"; }
-function setPayMode(m) { payMode = m; render(); }
+function setPayMode(m) { payMode = m; payBack = 0; render(); }
+function movePayMonth(d) {
+  if (payMode !== "actual") return;
+  payBack = Math.min(Math.max(payBack - d, 0), PAY_BACK_MAX);
+  render();
+}
+// 確定モードのときだけ月を戻せる。予想の2モードでは薄く出して押せないようにする。
+function payMonthPagerHTML() {
+  const can = payMode === "actual";
+  const btn = (label, d, on) => `<span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid var(--border);border-radius:5px;font-size:12px;line-height:1;color:${on ? "var(--text)" : "var(--border)"};background:#fff;${on ? "cursor:pointer" : ""}" ${on ? `onclick="movePayMonth(${d})"` : ""}>${label}</span>`;
+  return `<span style="display:inline-flex;gap:4px;align-items:center;margin-left:8px;font-size:12px;color:var(--muted)">${btn("‹", -1, can && payBack < PAY_BACK_MAX)}${btn("›", 1, can && payBack > 0)}<span style="margin-left:2px">${escapeHtml(payMonthLabel())}分</span></span>`;
+}
 function payMonthOffset() {
   const m = PAY_MODES.find(x => x.id === payMode);
-  return m ? m.offset : -1;
+  return (m ? m.offset : -1) - (payMode === "actual" ? payBack : 0);
 }
 function payMonthLabel() {
   const d = new Date();
@@ -2230,6 +2248,9 @@ function togglePayDetail(name) {
 }
 
 function renderCompensation() {
+  // ブックを取り込んである月は、アプリで計算し直さずその数値を出す。
+  const snap = payBookSnapshot();
+  if (snap) return renderPayBookView(snap);
   // 書き出しと同じ一覧を使う。ここだけ別に組むと、来月分の絞り込み（有償枠のみ）が
   // 画面に効かず、スプシと人数も金額も食い違う。
   const rows = payEntries();
@@ -2418,6 +2439,125 @@ function setPayExportSheetId() {
 // ブックは月ごと。アプリ側には月とリンクが積み上がっていく。
 function payExportSheets() { return ((state.compensation || {}).exportSheets) || {}; }
 function payExportBookId() { return payExportSheets()[payMonthKey()] || ""; }
+// ====== スプレッドシートの数値をそのまま見る ======
+// アプリの計算ではなくブックの額面を正とする月のための経路。
+// 8月分は支払い済みで、直しもスプシ側で進めるため、アプリは取り込んで見せるだけにする。
+// 取り込んだ内容は compensation.bookRows["YYYY-MM"] に置く。
+function payBookSnapshot(monthKey) {
+  const all = ((state.compensation || {}).bookRows) || {};
+  return all[monthKey || payMonthKey()] || null;
+}
+// 見出し名で列を引く。月によって列が増減するので位置では決め打ちしない。
+function parsePayBook(data) {
+  const norm = h => String(h == null ? "" : h).replace(/[\s　]/g, "");
+  const tabs = (data && data.values) || {};
+  for (const tab of Object.keys(tabs)) {
+    const grid = tabs[tab] || [];
+    if (grid.length < 2) continue;
+    const head = (grid[0] || []).map(norm);
+    const at = fn => head.findIndex(fn);
+    const iName = at(h => h.includes("担当者"));
+    const iTotal = at(h => h.includes("最終金額"));
+    if (iName < 0 || iTotal < 0) continue;
+    const cols = {
+      hours: at(h => h === "稼働時間"),
+      hoursPen: at(h => h.includes("稼働時間") && h.includes("ペナ")),
+      attPen: at(h => h.includes("出席率") && h.includes("ペナ")),
+      att: at(h => h.includes("出席率") && !h.includes("ペナ")),
+      scorePay: at(h => h.includes("360") && h.includes("加算")),
+      score: at(h => h.includes("360") && !h.includes("加算")),
+      school: at(h => h.includes("スクール")),
+      managerPay: at(h => h.includes("マネージャー") && h.includes("報酬")),
+    };
+    const num = v => (typeof v === "number" ? v
+      : (String(v == null ? "" : v).trim() !== "" && isFinite(Number(v)) ? Number(v) : null));
+    const rows = [];
+    for (let r = 1; r < grid.length; r++) {
+      const line = grid[r] || [];
+      const name = String(line[iName] == null ? "" : line[iName]).trim();
+      if (!name) break;                 // 氏名が切れたところで終わり（下の合計行を拾わない）
+      const rec = { name, total: num(line[iTotal]) };
+      Object.keys(cols).forEach(k => { if (cols[k] >= 0) rec[k] = num(line[cols[k]]); });
+      rows.push(rec);
+    }
+    if (rows.length) return { tab, attLabel: (cols.att >= 0 && head[cols.att]) || "出席率", rows };
+  }
+  return null;
+}
+async function importPayBook() {
+  const id = payExportBookId();
+  if (!id) { setStatus("❌ この月のブックが登録されていません", "#b73a4a"); return; }
+  const btn = document.getElementById("pay-book-btn");
+  const restore = () => { if (btn) { btn.disabled = false; btn.textContent = "スプシから取り込む"; } };
+  if (btn) { btn.disabled = true; btn.textContent = "取得中…"; }
+  try {
+    setStatus("⏳ スプレッドシートを読み込み中…");
+    const data = await callEdgeFn("sheets-read", { spreadsheetId: id });
+    const snap = parsePayBook(data);
+    if (!snap) throw new Error("「担当者」と「最終金額」の見出しがある表が見つかりませんでした");
+    if (!state.compensation) state.compensation = { members: {} };
+    if (!state.compensation.bookRows) state.compensation.bookRows = {};
+    state.compensation.bookRows[payMonthKey()] = { ...snap, sheetId: id, fetchedAt: new Date().toISOString() };
+    save(); render();
+    setStatus(`✅ ${snap.rows.length}名を${payMonthLabel()}分として取り込みました（${snap.tab}）`, "#2f7d4a");
+  } catch (e) {
+    setStatus("❌ 取り込み失敗: " + e.message, "#b73a4a");
+  } finally {
+    restore();
+  }
+}
+function dropPayBook() {
+  confirmDialog(`${payMonthLabel()}分の取り込みを取り消して、アプリの計算に戻しますか？`, () => {
+    if (state.compensation && state.compensation.bookRows) delete state.compensation.bookRows[payMonthKey()];
+    save(); render();
+  });
+}
+// 取り込んだブックをそのまま出す。アプリ側では計算しないので、按分も書き出しも出さない。
+function renderPayBookView(snap) {
+  const total = snap.rows.reduce((a, r) => a + (r.total || 0), 0);
+  const paid = snap.rows.filter(r => (r.total || 0) > 0).length;
+  const pct = v => (typeof v === "number" ? `${Math.round(v * 1000) / 10}%` : "—");
+  const money = v => (typeof v === "number" && v !== 0 ? yen(v) : "");
+  const head = ["担当者", "最終金額", "稼働時間", snap.attLabel, "出席率ペナ", "360°評価", "360°加算", "マネージャー"];
+  const body = snap.rows.map(r => {
+    const cells = [
+      escapeHtml(r.name),
+      typeof r.total === "number" ? yen(r.total) : "—",
+      typeof r.hours === "number" ? `${r.hours}h` : "",
+      pct(r.att),
+      money(r.attPen),
+      typeof r.score === "number" ? r.score.toFixed(2) : "",
+      money(r.scorePay),
+      money(r.managerPay),
+    ];
+    return `<tr>${cells.map((c, i) =>
+      `<td style="padding:6px 10px;border-top:1px solid var(--border);${i ? "text-align:right" : "font-weight:600"}">${c}</td>`
+    ).join("")}</tr>`;
+  }).join("");
+  return `
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title" style="font-size:15px">${escapeHtml(payMonthLabel())}分（スプレッドシートの数値）</div>
+        <span class="count-pill">支給 ${paid}名／${snap.rows.length}名</span>
+      </div>
+      <div style="font-size:22px;font-weight:700;margin-bottom:6px">${yen(total)}</div>
+      <div class="sync-note" style="margin:0 0 10px">
+        この月はアプリで計算せず、ブックの額面をそのまま出しています。
+        <a href="https://docs.google.com/spreadsheets/d/${escapeHtml(snap.sheetId)}/edit" target="_blank" rel="noopener">${escapeHtml(snap.tab)}</a>
+        を ${escapeHtml(String(snap.fetchedAt || "").slice(0, 16).replace("T", " "))} に取り込み。
+        スプシを直したら「スプシから取り込む」で読み直してください。
+        <span class="editor-only" style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="dropPayBook()">取り込みを取り消す</span>
+      </div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr>${head.map((h, i) =>
+          `<th style="padding:6px 10px;color:var(--muted);font-weight:600;${i ? "text-align:right" : "text-align:left"}">${escapeHtml(h)}</th>`
+        ).join("")}</tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>
+    </div>
+  `;
+}
+
 function payExportLinksHTML() {
   const sheets = payExportSheets();
   const months = Object.keys(sheets).filter(k => sheets[k]).sort().reverse();
