@@ -159,6 +159,21 @@ J列「担当部署メンバー（５名以上）」は〇が付いているだ�
 **9月分までの出席率の評価期間は4〜6月**（土曜13回）。直近3ヶ月ではない。
 評価対象外の人は100%扱い＝ペナルティなしで、セルは空にする。
 
+## 報酬ブックは月ごとに「修正前」と「修正版」の2本
+
+`compensation.exportSheets[月]` が**修正版**（これから直すほう。書き出し・取り込みはこちらだけ）、
+`compensation.paidSheets[月]` が**修正前**（実際に支払った記録。開くだけで触らない）。
+有償枠タブのリンク一覧に両方並べてある。
+
+| 月 | 修正前（支払済） | 修正版 |
+|---|---|---|
+| 2026-08 | `1xfXvUTtLVikqQbRnV6r85e110NFXUtMITl207GGRVe8` | `1F6h9K-pEHRRAArELMx608BeCk6qcPiO4klyNC4-uJkY` |
+| 2026-09 | `1qrkqPe4cbg75ouBnSk9Hbiz_BfFbp8C05JZyDM0deyw` | `1r8j3Mm8SAve9lDUXJocVPxa93pNXCLn6` |
+
+**9月の修正版はExcel（.xlsx）のままDriveに置かれているので Sheets API から読めない。**
+（`This operation is not supported for this document. The document must not be an Office file.`）
+Driveで「Googleスプレッドシートとして保存」に変換してもらうまで、読み取りも書き込みもできない。
+
 ## 開発環境（dev）は新システムになった
 
 **2026-10-04 から、dev の Supabase（`vsqrgcsobweaupiabagu`）は新しいスプシ中心のシステムの本体。**
