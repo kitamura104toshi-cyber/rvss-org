@@ -1661,6 +1661,10 @@ function editAttritionAttendanceLine() {
     save(); render();
   });
 }
+// 出席率の集計期間。CSVを取り込むときに compensation.attendancePeriod へ入れている。
+function attendancePeriodLabel() {
+  return ((state.compensation || {}).attendancePeriod) || "";
+}
 // 出席率は報酬側（compensation）に入っている。表記ゆれだけ吸収して引く。
 function attendanceRateOf(name) {
   const m = ((state.compensation || {}).members) || {};
@@ -1690,7 +1694,7 @@ function attritionAttendanceCard(rows) {
       </div>
       <div class="sync-note" style="margin:0 0 8px">
         自動では退会にしません。該当者を出すだけです。●は離脱リスクに登録済み。
-        出席率は報酬タブと同じ値（2026-06-01〜2026-08-31の集計）です。
+        出席率は報酬タブと同じ値${attendancePeriodLabel() ? "（" + escapeHtml(attendancePeriodLabel()) + "の集計）" : ""}です。
       </div>
       ${below.length ? `<div style="line-height:2.2">${below.map(tag).join(" ")}</div>`
         : `<div style="font-size:12px;color:var(--muted)">ラインを下回っている人はいません。</div>`}
@@ -2872,6 +2876,12 @@ function editPayMember(name) {
     </div>
   `);
 }
+// 報酬入力の保存先キー。﨑／崎のゆれで別人として増えないよう、既にある行に寄せる。
+function payMemberKey(name) {
+  const m = ((state.compensation || {}).members) || {};
+  for (const k of [name, name.replace(/﨑/g, "崎"), name.replace(/崎/g, "﨑")]) if (m[k]) return k;
+  return name;
+}
 function savePayMember(name) {
   const num = id => { const v = document.getElementById(id).value; return v === "" ? null : Number(v); };
   // 業務内容は月ごとに持つ。過去月のブックを出し直しても当時の記述が残るようにする。
@@ -2879,20 +2889,31 @@ function savePayMember(name) {
   const work = (document.getElementById("pay-work").value || "").trim();
   if (work) workNotes[payMonthKey()] = work;
   else delete workNotes[payMonthKey()];
+  const key = payMemberKey(name);
+  if (!state.compensation) state.compensation = { members: {} };
+  if (!state.compensation.members) state.compensation.members = {};
+  const prev = state.compensation.members[key] || {};
+  // 手動調整とマネージャー認定はこの月だけの値なので byMonth に書く。
+  // 同じ枠にある前提稼働（assumedHours など）を消さないよう、既存を引き継いで上書きする。
+  const byMonth = { ...(prev.byMonth || {}) };
+  const month = { ...(byMonth[payMonthKey()] || {}) };
+  month.adjust = num("pay-adjust") || 0;
+  month.adjustNote = (document.getElementById("pay-adjust-note").value || "").trim();
+  month.isManager = document.getElementById("pay-manager").checked;
+  byMonth[payMonthKey()] = month;
   const entry = {
+    ...prev,
     score360: num("pay-score"),
     attendanceRate: num("pay-att"),
-    adjust: num("pay-adjust") || 0,
-    adjustNote: (document.getElementById("pay-adjust-note").value || "").trim(),
     role: (document.getElementById("pay-role").value || "").trim(),
     workNotes,
     referral: document.getElementById("pay-referral").checked,
     school: document.getElementById("pay-school").checked,
-    isManager: document.getElementById("pay-manager").checked,
+    byMonth,
   };
-  if (!state.compensation) state.compensation = { members: {} };
-  if (!state.compensation.members) state.compensation.members = {};
-  state.compensation.members[name] = entry;
+  // メンバー直下に残った月次値は全部の月に効いてしまうので落とす。
+  PAY_MONTHLY_FIELDS.forEach(k => { delete entry[k]; });
+  state.compensation.members[key] = entry;
   save(); closeModal(); render();
 }
 
