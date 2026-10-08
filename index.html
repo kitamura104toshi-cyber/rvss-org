@@ -2448,17 +2448,23 @@ function payBookSnapshot(monthKey) {
   return all[monthKey || payMonthKey()] || null;
 }
 // 見出し名で列を引く。月によって列が増減するので位置では決め打ちしない。
+// 見出しは1行目とは限らない（9月のブックは1行目が「2026年9月分給与」のタイトル）ので、
+// 頭のほうから「担当者」と「最終金額」が並んでいる行を探す。
 function parsePayBook(data) {
   const norm = h => String(h == null ? "" : h).replace(/[\s　]/g, "");
   const tabs = (data && data.values) || {};
   for (const tab of Object.keys(tabs)) {
     const grid = tabs[tab] || [];
     if (grid.length < 2) continue;
-    const head = (grid[0] || []).map(norm);
+    let hr = -1, head = [];
+    for (let r = 0; r < Math.min(grid.length, 5); r++) {
+      const cand = (grid[r] || []).map(norm);
+      if (cand.some(h => h.includes("担当者")) && cand.some(h => h.includes("最終金額"))) { hr = r; head = cand; break; }
+    }
+    if (hr < 0) continue;
     const at = fn => head.findIndex(fn);
     const iName = at(h => h.includes("担当者"));
     const iTotal = at(h => h.includes("最終金額"));
-    if (iName < 0 || iTotal < 0) continue;
     const cols = {
       hours: at(h => h === "稼働時間"),
       hoursPen: at(h => h.includes("稼働時間") && h.includes("ペナ")),
@@ -2468,14 +2474,17 @@ function parsePayBook(data) {
       score: at(h => h.includes("360") && !h.includes("加算")),
       school: at(h => h.includes("スクール")),
       managerPay: at(h => h.includes("マネージャー") && h.includes("報酬")),
+      paidBefore: at(h => h.includes("修正前")),
+      diff: at(h => h.includes("差額")),
     };
     const num = v => (typeof v === "number" ? v
       : (String(v == null ? "" : v).trim() !== "" && isFinite(Number(v)) ? Number(v) : null));
     const rows = [];
-    for (let r = 1; r < grid.length; r++) {
+    for (let r = hr + 1; r < grid.length; r++) {
       const line = grid[r] || [];
       const name = String(line[iName] == null ? "" : line[iName]).trim();
-      if (!name) break;                 // 氏名が切れたところで終わり（下の合計行を拾わない）
+      if (!name) break;                            // 氏名が切れたところで終わり
+      if (/^(合計|総計|計)$/.test(name)) break;      // 合計行を人として数えない
       const rec = { name, total: num(line[iTotal]) };
       Object.keys(cols).forEach(k => { if (cols[k] >= 0) rec[k] = num(line[cols[k]]); });
       rows.push(rec);
@@ -2518,7 +2527,10 @@ function renderPayBookView(snap) {
   const paid = snap.rows.filter(r => (r.total || 0) > 0).length;
   const pct = v => (typeof v === "number" ? `${Math.round(v * 1000) / 10}%` : "—");
   const money = v => (typeof v === "number" && v !== 0 ? yen(v) : "");
-  const head = ["担当者", "最終金額", "稼働時間", snap.attLabel, "出席率ペナ", "360°評価", "360°加算", "マネージャー"];
+  // 修正前との差額が入っているブックでは、その2列も並べる。
+  const hasDiff = snap.rows.some(r => typeof r.paidBefore === "number" || typeof r.diff === "number");
+  const head = ["担当者", "最終金額", "稼働時間", snap.attLabel, "出席率ペナ", "360°評価", "360°加算", "マネージャー"]
+    .concat(hasDiff ? ["修正前", "差額"] : []);
   const body = snap.rows.map(r => {
     const cells = [
       escapeHtml(r.name),
@@ -2529,7 +2541,11 @@ function renderPayBookView(snap) {
       typeof r.score === "number" ? r.score.toFixed(2) : "",
       money(r.scorePay),
       money(r.managerPay),
-    ];
+    ].concat(hasDiff ? [
+      typeof r.paidBefore === "number" ? yen(r.paidBefore) : "",
+      typeof r.diff === "number" && r.diff !== 0
+        ? `<span style="color:${r.diff > 0 ? "var(--accent)" : "var(--pink-text)"}">${yen(r.diff)}</span>` : "",
+    ] : []);
     return `<tr>${cells.map((c, i) =>
       `<td style="padding:6px 10px;border-top:1px solid var(--border);${i ? "text-align:right" : "font-weight:600"}">${c}</td>`
     ).join("")}</tr>`;
@@ -2540,7 +2556,10 @@ function renderPayBookView(snap) {
         <div class="card-title" style="font-size:15px">${escapeHtml(payMonthLabel())}分（スプレッドシートの数値）</div>
         <span class="count-pill">支給 ${paid}名／${snap.rows.length}名</span>
       </div>
-      <div style="font-size:22px;font-weight:700;margin-bottom:6px">${yen(total)}</div>
+      <div style="font-size:22px;font-weight:700;margin-bottom:6px">${yen(total)}${
+        hasDiff ? `<span style="font-size:12px;font-weight:400;color:var(--muted);margin-left:10px">修正前 ${
+          yen(snap.rows.reduce((a, r) => a + (r.paidBefore || 0), 0))} ／ 差額 ${
+          yen(snap.rows.reduce((a, r) => a + (r.diff || 0), 0))}</span>` : ""}</div>
       <div class="sync-note" style="margin:0 0 10px">
         この月はアプリで計算せず、ブックの額面をそのまま出しています。
         <a href="https://docs.google.com/spreadsheets/d/${escapeHtml(snap.sheetId)}/edit" target="_blank" rel="noopener">${escapeHtml(snap.tab)}</a>
