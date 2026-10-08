@@ -170,9 +170,16 @@ J列「担当部署メンバー（５名以上）」は〇が付いているだ�
 | 2026-08 | `1xfXvUTtLVikqQbRnV6r85e110NFXUtMITl207GGRVe8` | `1F6h9K-pEHRRAArELMx608BeCk6qcPiO4klyNC4-uJkY` |
 | 2026-09 | `1qrkqPe4cbg75ouBnSk9Hbiz_BfFbp8C05JZyDM0deyw` | `1r8j3Mm8SAve9lDUXJocVPxa93pNXCLn6` |
 
-**9月の修正版はExcel（.xlsx）のままDriveに置かれているので Sheets API から読めない。**
-（`This operation is not supported for this document. The document must not be an Office file.`）
-Driveで「Googleスプレッドシートとして保存」に変換してもらうまで、読み取りも書き込みもできない。
+8月・9月とも修正版を `compensation.bookRows` に取り込んであり、有償枠タブは‹ ›で両方見られる。
+
+**列の位置は当てにしない。** 9月の修正版は途中で列が3本増え（修正前（告知済）／差額／8月補填分）、
+見出し行も1行目ではなく2行目にある。`parsePayBook` は見出しを先頭5行から探し、
+「合計」行で止める。列はすべて見出し名で引いている。
+
+xlsxのままDriveに置かれたファイルは Sheets API から読めない
+（`This operation is not supported for this document. The document must not be an Office file.`）。
+Driveで「Googleスプレッドシートとして保存」に変換してもらう。変換すると新しいIDになり、共有も
+引き継がれないので、サービスアカウントを編集者で入れ直してもらうこと。
 
 ## 開発環境（dev）は新システムになった
 
