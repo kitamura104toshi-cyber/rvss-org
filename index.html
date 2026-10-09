@@ -2250,7 +2250,7 @@ function togglePayDetail(name) {
 function renderCompensation() {
   // ブックを取り込んである月は、アプリで計算し直さずその数値を出す。
   const snap = payBookSnapshot();
-  if (snap) return renderPayBookView(snap);
+  if (snap) return renderPayBookView(snap) + (snap.alloc ? renderPayAllocView(snap.alloc) : "");
   // 書き出しと同じ一覧を使う。ここだけ別に組むと、来月分の絞り込み（有償枠のみ）が
   // 画面に効かず、スプシと人数も金額も食い違う。
   const rows = payEntries();
@@ -2493,6 +2493,64 @@ function parsePayBook(data) {
   }
   return null;
 }
+// 按分のタブ（月によって「按分」だったり「プロジェクト稼働」だったり）から、
+// 損益の行と「各PJ請求額」のブロックを見出しの文言で拾う。行の位置は当てにしない。
+function parsePayAlloc(data) {
+  const txt = v => String(v == null ? "" : v).replace(/[\s　]/g, "");
+  const num = v => (typeof v === "number" ? v
+    : (String(v == null ? "" : v).trim() !== "" && isFinite(Number(v)) ? Number(v) : null));
+  const tabs = (data && data.values) || {};
+  for (const tab of Object.keys(tabs)) {
+    const grid = tabs[tab] || [];
+    const start = grid.findIndex(row => txt((row || [])[0]) === "各PJ請求額");
+    if (start < 0) continue;
+    const pjs = [];
+    for (let r = start + 1; r < grid.length; r++) {
+      const name = String((grid[r] || [])[0] == null ? "" : grid[r][0]).trim();
+      if (!name || /^(合計|総計|計)$/.test(txt(name))) break;
+      pjs.push({ name, amount: num((grid[r] || [])[1]) });
+    }
+    if (!pjs.length) continue;
+    const pick = word => {
+      const row = grid.find(x => txt((x || [])[0]).startsWith(word));
+      return row ? num(row[1]) : null;
+    };
+    return {
+      tab, pjs,
+      paid: pick("支払報酬の合計"),
+      project: pick("うちプロジェクト按分"),
+      org: pick("組織運営按分"),
+      sales: pick("プロジェクト売上"),
+      margin: pick("収益"),
+    };
+  }
+  return null;
+}
+function renderPayAllocView(alloc) {
+  const money = v => (typeof v === "number" ? yen(Math.round(v)) : "—");
+  const total = alloc.pjs.reduce((a, p) => a + (p.amount || 0), 0);
+  const line = (label, v) => `<div class="pay-line"><span>${escapeHtml(label)}</span><span>${money(v)}</span></div>`;
+  return `
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title" style="font-size:14px">按分と各PJ請求額</div>
+        <span class="count-pill">${escapeHtml(alloc.tab)}</span>
+      </div>
+      <div style="font-size:12px;line-height:1.9;margin-bottom:10px">
+        ${line("支払報酬の合計", alloc.paid)}
+        ${line("うちプロジェクト按分", alloc.project)}
+        ${line("組織運営按分", alloc.org)}
+        ${line("プロジェクト売上（按分×1.5）", alloc.sales)}
+        ${line("収益", alloc.margin)}
+      </div>
+      <div class="section-label">各PJ請求額</div>
+      <div style="font-size:12px;line-height:1.9">
+        ${alloc.pjs.map(p => line(p.name, p.amount)).join("")}
+        <div class="pay-line total"><span>合計</span><span>${money(total)}</span></div>
+      </div>
+    </div>
+  `;
+}
 async function importPayBook() {
   const id = payExportBookId();
   if (!id) { setStatus("❌ この月のブックが登録されていません", "#b73a4a"); return; }
@@ -2506,7 +2564,8 @@ async function importPayBook() {
     if (!snap) throw new Error("「担当者」と「最終金額」の見出しがある表が見つかりませんでした");
     if (!state.compensation) state.compensation = { members: {} };
     if (!state.compensation.bookRows) state.compensation.bookRows = {};
-    state.compensation.bookRows[payMonthKey()] = { ...snap, sheetId: id, fetchedAt: new Date().toISOString() };
+    const alloc = parsePayAlloc(data);
+    state.compensation.bookRows[payMonthKey()] = { ...snap, alloc, sheetId: id, fetchedAt: new Date().toISOString() };
     save(); render();
     setStatus(`✅ ${snap.rows.length}名を${payMonthLabel()}分として取り込みました（${snap.tab}）`, "#2f7d4a");
   } catch (e) {
