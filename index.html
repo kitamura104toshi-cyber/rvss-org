@@ -364,7 +364,7 @@
     <div>
       <button class="btn" onclick="exportJSON()">JSONエクスポート</button>
       <button class="btn editor-only" id="sheets-backup-btn" onclick="backupToSheets()">Google Sheetsへバックアップ</button>
-      <button class="btn editor-only" id="member-export-btn" onclick="exportMembersToSheet()">Googleシートでエクスポート</button>
+      <button class="btn core-only" id="member-export-btn" onclick="exportMembersToSheet()">Googleシートでエクスポート</button>
       <button class="btn editor-only" onclick="resetData()">初期化</button>
     </div>
   </div>
@@ -1140,6 +1140,9 @@ function memberExportDialog(url, count, shareTo, error, shareNote) {
   `);
 }
 async function exportMembersToSheet() {
+  // アサイン状況は運営側の情報なので、コアメン以上だけ。
+  // ボタンは core-only で隠しているが、CSSだけだと開発者ツールで出せてしまうのでここでも見る。
+  if (!roleAtLeast("core")) { setStatus("❌ この操作はコアメン以上です", "#b73a4a"); return; }
   const btn = document.getElementById("member-export-btn");
   const label = btn ? btn.textContent : "";
   const restore = () => { if (btn) { btn.disabled = false; btn.textContent = label; } };
