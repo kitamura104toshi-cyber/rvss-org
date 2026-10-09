@@ -1044,8 +1044,9 @@ function memberExportRows() {
   const map = buildMemberMap();
   // 社会人メンター（BS）は学生メンバーの一覧とは別枠なので外す。
   // ヘッダーの「総メンバー数」も同じ数え方。
-  const names = Object.keys(map).filter(n => !isBSMember(n)).sort((a, b) => a.localeCompare(b, "ja"));
-  const rows = [["氏名", "大学", "エリア", "アサイン状況"]];
+  const names = Object.keys(map).filter(n => !isBSMember(n)).sort(byEnrolledDesc);
+  // 並び順の根拠が見えないと確かめようがないので、入会日も列に出す
+  const rows = [["氏名", "入会日", "大学", "エリア", "アサイン状況"]];
   names.forEach(n => {
     const mi = memberInfo(n) || {};
     const info = map[n] || {};
@@ -1054,6 +1055,7 @@ function memberExportRows() {
       [].concat(info.depts || [], info.pjs || []).map(coarseAssignName).filter(Boolean)));
     rows.push([
       n,
+      enrolledAtOf(n).replace(/-/g, "/"),
       String(mi.university || "").trim(),
       String(mi.area || "").trim(),
       (state.deletedMembers || []).includes(n) ? "退会済み" : (tags.length ? tags.join("・") : "未アサイン"),
@@ -1131,7 +1133,7 @@ function memberExportDialog(url, count, shareTo, error, shareNote) {
   openModal(`
     <h3>メンバー一覧を書き出しました</h3>
     <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
-      ${count}名／氏名・大学・エリア・アサイン状況
+      ${count}名／氏名・入会日・大学・エリア・アサイン状況（入会日の新しい順）
     </div>
     ${error ? `<div class="warn" style="margin-bottom:10px">
         スプレッドシートに書き出せませんでした：${escapeHtml(error)}
@@ -1894,6 +1896,16 @@ function editAttritionAttendanceLine() {
     state.attrition.attendanceLine = n;
     save(); render();
   });
+}
+// 入会日（＝参画日）。退会状況タブと同じ値を見る。
+function enrolledAtOf(name) {
+  return toYmd(((((state.attrition || {}).members) || {})[name] || {}).enrolledAt);
+}
+// 新しく入った人を上に。日付が無い人はいちばん下へ落とし、同日は名前順でそろえる。
+function byEnrolledDesc(a, b) {
+  const da = enrolledAtOf(a), db = enrolledAtOf(b);
+  if (da !== db) return (db || "").localeCompare(da || "");
+  return a.localeCompare(b, "ja");
 }
 // 出席率の集計期間。CSVを取り込むときに compensation.attendancePeriod へ入れている。
 function attendancePeriodLabel() {
@@ -4323,8 +4335,9 @@ function renderAll() {
       const f = REFERRAL_FILTERS.find(f => f.id === allFilterReferral);
       return !f || f.test(n);
     })
-    // 有償枠を常に上部に。エリアで絞り込んだときも同じ並びになる
-    .sort(([a],[b]) => (isPaidMember(b) ? 1 : 0) - (isPaidMember(a) ? 1 : 0) || a.localeCompare(b,"ja"));
+    // 有償枠を常に上部に。エリアで絞り込んだときも同じ並びになる。
+    // その中は入会日の新しい順。
+    .sort(([a],[b]) => (isPaidMember(b) ? 1 : 0) - (isPaidMember(a) ? 1 : 0) || byEnrolledDesc(a, b));
 
   // BSメンバー（学生メンバーではないため別枠にする。件数表示からも除く）
   const isBSName = (n) => !!(memberInfo(n) || {}).isBS;
