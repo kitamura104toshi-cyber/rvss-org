@@ -1014,6 +1014,8 @@ function exportJSON() {
 }
 
 // ====== メンバー一覧の書き出し ======
+// スプシを読み書きしているサービスアカウント。共有をお願いするときに画面へ出す。
+const SHEETS_BOT_EMAIL = "sheets-backup-bot@rvss-sheets-backup.iam.gserviceaccount.com";
 // 押すたびに新しいブックを作る。過去に出したものを上書きしないので、
 // 「いつ時点の一覧か」がファイルとして残る。
 // 載せるのはメンバー情報だけ（大学・エリア・アサイン状況）。報酬や契約状況は入れない。
@@ -1035,6 +1037,26 @@ function memberExportRows() {
     ]);
   });
   return rows;
+}
+// サービスアカウントには Drive にファイルを作る権限が無く、新規ブックの作成は 403 で落ちる。
+// そこで、人が作って bot に編集者で共有したブックを1冊だけ登録しておき、
+// 押すたびにそこへ日付入りのタブを足していく。過去のタブは消さないので履歴になる。
+function memberExportBookId() { return String(state.memberExportSheetId || "").trim(); }
+function setMemberExportBookId() {
+  inputDialog(
+    "メンバー一覧を書き出すブックのURL（bot に編集者で共有したもの。空にすると解除）",
+    memberExportBookId(),
+    v => {
+      const raw = String(v || "").trim();
+      if (!raw) { delete state.memberExportSheetId; save(); setStatus("✅ 書き出し先を解除しました", "#2f7d4a"); return; }
+      const m = raw.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
+      const id = m ? m[1] : raw;
+      if (!/^[A-Za-z0-9_-]{20,}$/.test(id)) { setStatus("❌ スプレッドシートのURLを貼ってください", "#b73a4a"); return; }
+      state.memberExportSheetId = id;
+      save();
+      setStatus("✅ 書き出し先を登録しました", "#2f7d4a");
+    }
+  );
 }
 // スプシを作れなかったときの逃げ道。Excelで開いても化けないようBOMを付ける。
 function downloadMemberCsv() {
@@ -1065,10 +1087,20 @@ function memberExportDialog(url, count, shareTo, error) {
     <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
       ${count}名／氏名・大学・エリア・アサイン状況
     </div>
-    ${error ? `<div class="warn" style="margin-bottom:10px">スプレッドシートを作れませんでした：${escapeHtml(error)}<br>CSVでのダウンロードはできます。</div>` : `
+    ${error ? `<div class="warn" style="margin-bottom:10px">
+        スプレッドシートに書き出せませんでした：${escapeHtml(error)}
+        ${/403|permission/i.test(error) ? `<br>bot にはブックを新規作成する権限がありません。
+          スプレッドシートを1つ作って <b>${escapeHtml(SHEETS_BOT_EMAIL)}</b> に編集者で共有し、
+          <span style="cursor:pointer;text-decoration:underline" onclick="closeModal();setMemberExportBookId()">書き出し先を登録</span>
+          してください。以後はそのブックに日付のタブが増えていきます。` : ""}
+        <br>CSVでのダウンロードは今でもできます。
+      </div>` : `
       <input id="member-export-url" readonly value="${escapeHtml(url)}" onclick="this.select()"/>
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px">
-        ${escapeHtml(shareTo)} に編集者で共有しました。押すたびに新しいブックができます。
+        ${memberExportBookId()
+          ? "押すたびに日付のタブが増えます。いちばん左が今回のぶんです。"
+          : escapeHtml(shareTo) + " に編集者で共有しました。押すたびに新しいブックができます。"}
+        <span style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="closeModal();setMemberExportBookId()">書き出し先を変える</span>
       </div>`}
     <div class="actions">
       <button class="btn" onclick="downloadMemberCsv()">CSVでダウンロード</button>
@@ -1088,21 +1120,23 @@ async function exportMembersToSheet() {
     setStatus("❌ 共有先のメールアドレスが未設定です（有償枠タブの「共有先」で入れてください）", "#b73a4a");
     return;
   }
-  if (btn) { btn.disabled = true; btn.textContent = "作成中…"; }
+  if (btn) { btn.disabled = true; btn.textContent = "書き出し中…"; }
   const rows = memberExportRows();
+  const d = new Date();
+  const p = n => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}${p(d.getMinutes())}`;
+  const bookId = memberExportBookId();
   try {
-    setStatus("⏳ スプレッドシートを作成中…");
-    const d = new Date();
-    const p = n => String(n).padStart(2, "0");
+    setStatus("⏳ スプレッドシートに書き出し中…");
     const data = await callEdgeFn("sheets-pay-export", {
-      bookTitle: `RVSSメンバー一覧 ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}${p(d.getMinutes())}`,
-      shareWith: [shareTo],
-      tabs: [{ title: "メンバー一覧", rows, headerRowIndex: 0, index: 0 }],
+      // ブックが登録してあればそこへ、無ければ新規作成を試す（権限が無ければ下で拾う）
+      ...(bookId ? { spreadsheetId: bookId } : { bookTitle: `RVSSメンバー一覧 ${stamp}`, shareWith: [shareTo] }),
+      tabs: [{ title: `メンバー一覧 ${stamp}`, rows, headerRowIndex: 0, index: 0 }],
     });
     setStatus(`✅ ${rows.length - 1}名を書き出しました`, "#2f7d4a");
     memberExportDialog(data.url, rows.length - 1, shareTo, "");
   } catch (e) {
-    setStatus("❌ 作成失敗: " + e.message, "#b73a4a");
+    setStatus("❌ 書き出し失敗: " + e.message, "#b73a4a");
     memberExportDialog("", rows.length - 1, shareTo, e.message);
   } finally {
     restore();
