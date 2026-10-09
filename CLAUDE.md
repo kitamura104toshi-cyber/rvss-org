@@ -187,6 +187,9 @@ Driveで「Googleスプレッドシートとして保存」に変換してもら
 氏名・大学・エリア・アサイン状況の4列だけを出す。報酬や契約状況は入れない。
 対象は `buildMemberMap()` から社会人メンター（BS）を除いた83名。「総メンバー数」と同じ数え方。
 
+**コアメン以上。** ボタンは `core-only`、`exportMembersToSheet` の先頭でも `roleAtLeast("core")` を見る
+（CSSで隠すだけだと開発者ツールで出せてしまうため）。アサイン状況は運営側の情報なのでメンバーには出さない。
+
 書き出し先の共有ドライブは `0ABTnfKxVk-GFUk9PVA`（`state.memberExportDriveId`）。
 bot はこのドライブのメンバーに入っている。
 
