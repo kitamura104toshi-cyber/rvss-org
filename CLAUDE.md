@@ -190,6 +190,12 @@ Driveで「Googleスプレッドシートとして保存」に変換してもら
 書き出し先の共有ドライブは `0ABTnfKxVk-GFUk9PVA`（`state.memberExportDriveId`）。
 bot はこのドライブのメンバーに入っている。
 
+**作った直後にドメイン全体へ編集権限を付ける**（`shareDomain`）。
+ドメインは `memberExportDomain()`＝共有先メールのドメイン（`rvss.realvalue.inc`）。
+`allowFileDiscovery: false` なので検索には出ず、リンクを知っている組織内の全員が編集できる。
+共有ドライブのメンバーでないコアメンにも、リンクを渡すだけで開いてもらえる。
+共有に失敗してもファイルはできているので、そこでは落とさずダイアログに理由を出す。
+
 **2026-10-09 に `rvss-sheets-backup`（801974032877）で Google Drive API を有効化した。**
 それまでは新規作成が403で落ちていた。詰まったときの切り分けは順に見る。
 
