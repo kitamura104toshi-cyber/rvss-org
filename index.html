@@ -942,6 +942,27 @@ function save() {
 }
 
 // Supabase リアルタイム購読：他端末・他ユーザーの変更を即反映
+// 開きっぱなしのページは、ほかの人が直した内容を拾わない。読み直して描き直すだけのボタン。
+// ページ自体は再読み込みしない（?key= が落ちてロールが member に戻る事故を避ける）。
+async function refreshFromCloud() {
+  const btn = document.getElementById("all-refresh-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "更新中…"; }
+  try {
+    setStatus("⏳ 最新を読み込み中…");
+    const { data: row, error } = await sb.from("org_state").select("data").eq("id", ROW_ID).maybeSingle();
+    if (error) throw error;
+    if (!row) throw new Error("クラウドにデータがありません");
+    applyRemote(row.data);                 // 中身が変わっていれば render() まで走る
+    const d = new Date();
+    const p = n => String(n).padStart(2, "0");
+    setStatus(`✅ ${p(d.getHours())}:${p(d.getMinutes())} 時点の内容です`, "#2f7d4a");
+  } catch (e) {
+    setStatus("❌ 更新できませんでした: " + e.message, "#b73a4a");
+  }
+  // render() が走ったあとはボタンが作り直されているので、改めて引き直して戻す
+  const again = document.getElementById("all-refresh-btn");
+  if (again) { again.disabled = false; again.textContent = "最新化"; }
+}
 function applyRemote(remote) {
   if (!remote) return;
   cloudLoaded = true; // クラウドの値を受け取れたので、以降の push を許可する
@@ -1425,6 +1446,7 @@ function renderContent() {
   } else if (currentTab === "all") {
     tb.innerHTML = `
       <input class="search" id="search" placeholder="メンバー検索（名前・経験・スキル・やりたいこと）…" value="${escapeHtml(allFilterSearch)}" oninput="onAllSearchInput(this.value)" style="min-width:260px"/>
+      <button class="btn" id="all-refresh-btn" onclick="refreshFromCloud()" style="margin-left:6px">最新化</button>
       <button class="btn primary editor-only" onclick="addMember()" style="margin-left:6px">+ メンバーを追加</button>
     `;
     el.innerHTML = renderAll();
