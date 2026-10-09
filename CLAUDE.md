@@ -187,11 +187,19 @@ Driveで「Googleスプレッドシートとして保存」に変換してもら
 氏名・大学・エリア・アサイン状況の4列だけを出す。報酬や契約状況は入れない。
 対象は `buildMemberMap()` から社会人メンター（BS）を除いた83名。「総メンバー数」と同じ数え方。
 
-**原因は GCPプロジェクト `rvss-sheets-backup`（801974032877）で Google Drive API が無効なこと。**
-`gcp-diag` が `Google Drive API has not been used in project 801974032877 before or it is disabled` を返す。
-スコープ（`drive.file` + `spreadsheets`）は足りている。有効化すれば新規作成できるようになる。
-Sheets API 側の作成は原因を隠して `The caller does not have permission` としか言わないので、
-切り分けは `gcp-diag`（Drive の about と files.create を直接叩く）を使う。
+書き出し先の共有ドライブは `0ABTnfKxVk-GFUk9PVA`（`state.memberExportDriveId`）。
+bot はこのドライブのメンバーに入っている。
+
+**2026-10-09 に `rvss-sheets-backup`（801974032877）で Google Drive API を有効化した。**
+それまでは新規作成が403で落ちていた。詰まったときの切り分けは順に見る。
+
+- `Google Drive API has not been used in project ... or it is disabled` → Drive API が無効
+- `The caller does not have permission`（Sheets API の作成）→ 同じ原因。Sheets 側は理由を隠す
+- `File not found: <共有ドライブID>` → **ドライブは見えているがメンバーに入っていない。**
+  Drive は権限の無いものを404で返す。共有ドライブのメンバーに bot を追加する
+
+`gcp-diag` が Drive の about と files.create を直接叩くので切り分けに使える。
+ただし**呼ぶとテスト用のスプレッドシートが2枚できる**ので、済んだら消すこと。
 
 **サービスアカウントが作ったファイルの所有者をユーザーへ移すことはGoogleが許していない。**
 そこで共有ドライブの中に作る。所有者がドライブ（＝組織）になるので、1枚ずつ共有しなくても
@@ -205,7 +213,7 @@ Sheets API 側の作成は原因を隠して `The caller does not have permissio
   「メンバー一覧 YYYY-MM-DD HHMM」のタブを index 0 に足す。過去のタブは消さない（逃げ道）
 
 `sheets-new-book` は Vault の `gcp_creator_service_account`（作成用の別アカウントの鍵）を使い、
-無ければ既定の bot に落ちる。既定の bot は Drive API が無効なので作成はできない。
+無ければ既定の bot に落ちる。いまは既定の bot で作成できているので、作成用の鍵は登録していない。
 **作成用アカウントを共有ドライブのメンバー（コンテンツ管理者）に入れておくこと。**
 
 どの経路でもCSVダウンロード（`downloadMemberCsv`）は常に使える。
