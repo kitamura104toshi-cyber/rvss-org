@@ -364,6 +364,7 @@
     <div>
       <button class="btn" onclick="exportJSON()">JSONエクスポート</button>
       <button class="btn editor-only" id="sheets-backup-btn" onclick="backupToSheets()">Google Sheetsへバックアップ</button>
+      <button class="btn editor-only" id="member-export-btn" onclick="exportMembersToSheet()">Googleシートでエクスポート</button>
       <button class="btn editor-only" onclick="resetData()">初期化</button>
     </div>
   </div>
@@ -1010,6 +1011,102 @@ function exportJSON() {
   a.href = URL.createObjectURL(blob);
   a.download = "rvss-org-" + new Date().toISOString().slice(0,10) + ".json";
   a.click();
+}
+
+// ====== メンバー一覧の書き出し ======
+// 押すたびに新しいブックを作る。過去に出したものを上書きしないので、
+// 「いつ時点の一覧か」がファイルとして残る。
+// 載せるのはメンバー情報だけ（大学・エリア・アサイン状況）。報酬や契約状況は入れない。
+function memberExportRows() {
+  const map = buildMemberMap();
+  const names = Object.keys(map).sort((a, b) => a.localeCompare(b, "ja"));
+  const rows = [["氏名", "大学", "エリア", "アサイン状況"]];
+  names.forEach(n => {
+    const mi = memberInfo(n) || {};
+    const info = map[n] || {};
+    // 役割の括弧やグループ名を落として、所属の名前だけを並べる
+    const tags = Array.from(new Set(
+      [].concat(info.depts || [], info.pjs || []).map(coarseAssignName).filter(Boolean)));
+    rows.push([
+      n,
+      String(mi.university || "").trim(),
+      String(mi.area || "").trim(),
+      (state.deletedMembers || []).includes(n) ? "退会済み" : (tags.length ? tags.join("・") : "未アサイン"),
+    ]);
+  });
+  return rows;
+}
+// スプシを作れなかったときの逃げ道。Excelで開いても化けないようBOMを付ける。
+function downloadMemberCsv() {
+  const esc = v => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+  const csv = "\uFEFF" + memberExportRows().map(r => r.map(esc).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `rvss-members-${todayYmd()}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+// clipboard API は権限や http で落ちることがあるので、落ちたら選択してコピーに回す。
+async function copyMemberExportUrl(url) {
+  const input = document.getElementById("member-export-url");
+  try {
+    await navigator.clipboard.writeText(url);
+  } catch (e) {
+    if (!input) { setStatus("❌ コピーできませんでした。URLを選んでコピーしてください", "#b73a4a"); return; }
+    input.select();
+    if (!document.execCommand("copy")) { setStatus("❌ コピーできませんでした", "#b73a4a"); return; }
+  }
+  const btn = document.getElementById("member-export-copy");
+  if (btn) { btn.textContent = "✅ コピーしました"; setTimeout(() => { btn.textContent = "リンクをコピー"; }, 2000); }
+}
+function memberExportDialog(url, count, shareTo, error) {
+  openModal(`
+    <h3>メンバー一覧を書き出しました</h3>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
+      ${count}名／氏名・大学・エリア・アサイン状況
+    </div>
+    ${error ? `<div class="warn" style="margin-bottom:10px">スプレッドシートを作れませんでした：${escapeHtml(error)}<br>CSVでのダウンロードはできます。</div>` : `
+      <input id="member-export-url" readonly value="${escapeHtml(url)}" onclick="this.select()"/>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">
+        ${escapeHtml(shareTo)} に編集者で共有しました。押すたびに新しいブックができます。
+      </div>`}
+    <div class="actions">
+      <button class="btn" onclick="downloadMemberCsv()">CSVでダウンロード</button>
+      ${error ? "" : `
+        <a class="btn" href="${escapeHtml(url)}" target="_blank" rel="noopener" style="text-decoration:none">開く</a>
+        <button class="btn primary" id="member-export-copy" onclick="copyMemberExportUrl(${jsArg(url)})">リンクをコピー</button>`}
+      <button class="btn" onclick="closeModal()">閉じる</button>
+    </div>
+  `);
+}
+async function exportMembersToSheet() {
+  const btn = document.getElementById("member-export-btn");
+  const label = btn ? btn.textContent : "";
+  const restore = () => { if (btn) { btn.disabled = false; btn.textContent = label; } };
+  const shareTo = payExportShareTo();
+  if (!shareTo) {
+    setStatus("❌ 共有先のメールアドレスが未設定です（有償枠タブの「共有先」で入れてください）", "#b73a4a");
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = "作成中…"; }
+  const rows = memberExportRows();
+  try {
+    setStatus("⏳ スプレッドシートを作成中…");
+    const d = new Date();
+    const p = n => String(n).padStart(2, "0");
+    const data = await callEdgeFn("sheets-pay-export", {
+      bookTitle: `RVSSメンバー一覧 ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}${p(d.getMinutes())}`,
+      shareWith: [shareTo],
+      tabs: [{ title: "メンバー一覧", rows, headerRowIndex: 0, index: 0 }],
+    });
+    setStatus(`✅ ${rows.length - 1}名を書き出しました`, "#2f7d4a");
+    memberExportDialog(data.url, rows.length - 1, shareTo, "");
+  } catch (e) {
+    setStatus("❌ 作成失敗: " + e.message, "#b73a4a");
+    memberExportDialog("", rows.length - 1, shareTo, e.message);
+  } finally {
+    restore();
+  }
 }
 
 // Google Sheetsへ手動バックアップ（1日1回の自動実行とは別に、いつでも押せる）
