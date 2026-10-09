@@ -181,6 +181,22 @@ xlsxのままDriveに置かれたファイルは Sheets API から読めない
 Driveで「Googleスプレッドシートとして保存」に変換してもらう。変換すると新しいIDになり、共有も
 引き継がれないので、サービスアカウントを編集者で入れ直してもらうこと。
 
+## メンバー一覧の書き出し
+
+ヘッダーの「Googleシートでエクスポート」（`exportMembersToSheet`）。
+氏名・大学・エリア・アサイン状況の4列だけを出す。報酬や契約状況は入れない。
+対象は `buildMemberMap()` の全員（社会人メンターBSも含む93名。総メンバー数の83はBS除き）。
+
+**サービスアカウントは Drive にファイルを作れない（新規作成は403）。**
+`sheets-pay-export` に `bookTitle` を渡す経路は使えないので、人が作って bot に編集者で
+共有したブックを `state.memberExportSheetId` に登録し、押すたびに
+「メンバー一覧 YYYY-MM-DD HHMM」のタブを index 0（いちばん左）に足していく。
+過去のタブは消さない（`keepOtherSheets` の既定が true）。
+登録は `setMemberExportBookId`、失敗ダイアログからも開ける。
+
+ブック未登録のときは新規作成を試し、403ならダイアログで共有をお願いする。
+どちらの場合もCSVダウンロード（`downloadMemberCsv`）は常に使える。
+
 ## 開発環境（dev）は新システムになった
 
 **2026-10-04 から、dev の Supabase（`vsqrgcsobweaupiabagu`）は新しいスプシ中心のシステムの本体。**
