@@ -185,9 +185,15 @@ Driveで「Googleスプレッドシートとして保存」に変換してもら
 
 ヘッダーの「Googleシートでエクスポート」（`exportMembersToSheet`）。
 氏名・大学・エリア・アサイン状況の4列だけを出す。報酬や契約状況は入れない。
-対象は `buildMemberMap()` の全員（社会人メンターBSも含む93名。総メンバー数の83はBS除き）。
+対象は `buildMemberMap()` から社会人メンター（BS）を除いた83名。「総メンバー数」と同じ数え方。
 
-**サービスアカウントは Drive にファイルを作れない（新規作成は403）。**
+**原因は GCPプロジェクト `rvss-sheets-backup`（801974032877）で Google Drive API が無効なこと。**
+`gcp-diag` が `Google Drive API has not been used in project 801974032877 before or it is disabled` を返す。
+スコープ（`drive.file` + `spreadsheets`）は足りている。有効化すれば新規作成できるようになる。
+Sheets API 側の作成は原因を隠して `The caller does not have permission` としか言わないので、
+切り分けは `gcp-diag`（Drive の about と files.create を直接叩く）を使う。
+
+有効化するまでの逃げ道として、
 `sheets-pay-export` に `bookTitle` を渡す経路は使えないので、人が作って bot に編集者で
 共有したブックを `state.memberExportSheetId` に登録し、押すたびに
 「メンバー一覧 YYYY-MM-DD HHMM」のタブを index 0（いちばん左）に足していく。

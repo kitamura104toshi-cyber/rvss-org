@@ -1021,7 +1021,9 @@ const SHEETS_BOT_EMAIL = "sheets-backup-bot@rvss-sheets-backup.iam.gserviceaccou
 // 載せるのはメンバー情報だけ（大学・エリア・アサイン状況）。報酬や契約状況は入れない。
 function memberExportRows() {
   const map = buildMemberMap();
-  const names = Object.keys(map).sort((a, b) => a.localeCompare(b, "ja"));
+  // 社会人メンター（BS）は学生メンバーの一覧とは別枠なので外す。
+  // ヘッダーの「総メンバー数」も同じ数え方。
+  const names = Object.keys(map).filter(n => !isBSMember(n)).sort((a, b) => a.localeCompare(b, "ja"));
   const rows = [["氏名", "大学", "エリア", "アサイン状況"]];
   names.forEach(n => {
     const mi = memberInfo(n) || {};
@@ -1089,10 +1091,12 @@ function memberExportDialog(url, count, shareTo, error) {
     </div>
     ${error ? `<div class="warn" style="margin-bottom:10px">
         スプレッドシートに書き出せませんでした：${escapeHtml(error)}
-        ${/403|permission/i.test(error) ? `<br>bot にはブックを新規作成する権限がありません。
-          スプレッドシートを1つ作って <b>${escapeHtml(SHEETS_BOT_EMAIL)}</b> に編集者で共有し、
+        ${/403|permission/i.test(error) ? `<br>新しいブックを作るには、GCPプロジェクト <b>rvss-sheets-backup</b> で
+          <a href="https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=801974032877" target="_blank" rel="noopener">Google Drive API を有効化</a>
+          してください。有効化すれば押すたびに新しいスプレッドシートができます。
+          <br>急ぐときは、スプレッドシートを1つ作って <b>${escapeHtml(SHEETS_BOT_EMAIL)}</b> に編集者で共有し、
           <span style="cursor:pointer;text-decoration:underline" onclick="closeModal();setMemberExportBookId()">書き出し先を登録</span>
-          してください。以後はそのブックに日付のタブが増えていきます。` : ""}
+          すると、そのブックに日付のタブを足していく形でも出せます。` : ""}
         <br>CSVでのダウンロードは今でもできます。
       </div>` : `
       <input id="member-export-url" readonly value="${escapeHtml(url)}" onclick="this.select()"/>
