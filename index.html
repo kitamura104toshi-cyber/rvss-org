@@ -1043,6 +1043,14 @@ function memberExportRows() {
 // サービスアカウントには Drive にファイルを作る権限が無く、新規ブックの作成は 403 で落ちる。
 // そこで、人が作って bot に編集者で共有したブックを1冊だけ登録しておき、
 // 押すたびにそこへ日付入りのタブを足していく。過去のタブは消さないので履歴になる。
+// 書き出したファイルを編集可にする組織のドメイン。
+// 既定は報酬ブックの共有先メールのドメイン（＝RVSSのアカウント）。
+function memberExportDomain() {
+  const override = String(state.memberExportDomain || "").trim();
+  if (override) return override;
+  const at = payExportShareTo().split("@")[1];
+  return (at || "").trim();
+}
 function memberExportBookId() { return String(state.memberExportSheetId || "").trim(); }
 function memberExportDriveId() { return String(state.memberExportDriveId || "").trim(); }
 // 共有ドライブ（フォルダ）のURLなら「押すたびに新しいファイル」、
@@ -1098,7 +1106,7 @@ async function copyMemberExportUrl(url) {
   const btn = document.getElementById("member-export-copy");
   if (btn) { btn.textContent = "✅ コピーしました"; setTimeout(() => { btn.textContent = "リンクをコピー"; }, 2000); }
 }
-function memberExportDialog(url, count, shareTo, error) {
+function memberExportDialog(url, count, shareTo, error, shareNote) {
   openModal(`
     <h3>メンバー一覧を書き出しました</h3>
     <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
@@ -1116,7 +1124,7 @@ function memberExportDialog(url, count, shareTo, error) {
       <input id="member-export-url" readonly value="${escapeHtml(url)}" onclick="this.select()"/>
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px">
         ${memberExportDriveId()
-          ? "共有ドライブに作りました。押すたびに新しいファイルができます。"
+          ? "共有ドライブに作りました。押すたびに新しいファイルができます。" + (shareNote || "")
           : memberExportBookId()
           ? "押すたびに日付のタブが増えます。いちばん左が今回のぶんです。"
           : escapeHtml(shareTo) + " に編集者で共有しました。押すたびに新しいブックができます。"}
@@ -1155,6 +1163,8 @@ async function exportMembersToSheet() {
     const data = driveId
       ? await callEdgeFn("sheets-new-book", {
           title, folderId: driveId,
+          // 出した時点で組織の全員が編集できるようにする。コアメンにリンクを渡すだけで開ける。
+          shareDomain: memberExportDomain(),
           tabs: [{ title: "メンバー一覧", rows, headerRowIndex: 0 }],
         })
       : await callEdgeFn("sheets-pay-export", {
@@ -1162,8 +1172,14 @@ async function exportMembersToSheet() {
           ...(bookId ? { spreadsheetId: bookId } : { bookTitle: title, shareWith: [shareTo] }),
           tabs: [{ title: `メンバー一覧 ${stamp}`, rows, headerRowIndex: 0, index: 0 }],
         });
+    // 共有に失敗してもファイルはできているので、そこは落とさず画面に出す
+    const failed = (data.shareErrors || []).length;
+    const note = !driveId ? ""
+      : failed ? `<br><span style="color:var(--pink-text)">組織全体への共有は付けられませんでした（${escapeHtml(String(data.shareErrors[0]))}）。手動で共有してください。</span>`
+      : (data.shared || []).length ? `<br>${escapeHtml(String(data.shared[0]))} の全員が編集できます。`
+      : "";
     setStatus(`✅ ${rows.length - 1}名を書き出しました`, "#2f7d4a");
-    memberExportDialog(data.url, rows.length - 1, shareTo, "");
+    memberExportDialog(data.url, rows.length - 1, shareTo, "", note);
   } catch (e) {
     setStatus("❌ 書き出し失敗: " + e.message, "#b73a4a");
     memberExportDialog("", rows.length - 1, shareTo, e.message);
