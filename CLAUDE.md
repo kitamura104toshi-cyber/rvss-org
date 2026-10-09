@@ -193,15 +193,22 @@ Driveで「Googleスプレッドシートとして保存」に変換してもら
 Sheets API 側の作成は原因を隠して `The caller does not have permission` としか言わないので、
 切り分けは `gcp-diag`（Drive の about と files.create を直接叩く）を使う。
 
-有効化するまでの逃げ道として、
-`sheets-pay-export` に `bookTitle` を渡す経路は使えないので、人が作って bot に編集者で
-共有したブックを `state.memberExportSheetId` に登録し、押すたびに
-「メンバー一覧 YYYY-MM-DD HHMM」のタブを index 0（いちばん左）に足していく。
-過去のタブは消さない（`keepOtherSheets` の既定が true）。
-登録は `setMemberExportBookId`、失敗ダイアログからも開ける。
+**サービスアカウントが作ったファイルの所有者をユーザーへ移すことはGoogleが許していない。**
+そこで共有ドライブの中に作る。所有者がドライブ（＝組織）になるので、1枚ずつ共有しなくても
+そのドライブのメンバーが開ける。
 
-ブック未登録のときは新規作成を試し、403ならダイアログで共有をお願いする。
-どちらの場合もCSVダウンロード（`downloadMemberCsv`）は常に使える。
+書き出し先は `setMemberExportTarget` で1つだけ登録し、貼られたURLの形で振り分ける。
+
+- **共有ドライブ（フォルダ）のURL** → `state.memberExportDriveId`。`sheets-new-book` が
+  押すたびに新しいスプレッドシートをそのドライブの中に作る。これが本線
+- **スプレッドシートのURL** → `state.memberExportSheetId`。`sheets-pay-export` がそのブックに
+  「メンバー一覧 YYYY-MM-DD HHMM」のタブを index 0 に足す。過去のタブは消さない（逃げ道）
+
+`sheets-new-book` は Vault の `gcp_creator_service_account`（作成用の別アカウントの鍵）を使い、
+無ければ既定の bot に落ちる。既定の bot は Drive API が無効なので作成はできない。
+**作成用アカウントを共有ドライブのメンバー（コンテンツ管理者）に入れておくこと。**
+
+どの経路でもCSVダウンロード（`downloadMemberCsv`）は常に使える。
 
 ## 開発環境（dev）は新システムになった
 

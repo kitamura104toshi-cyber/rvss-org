@@ -1044,19 +1044,34 @@ function memberExportRows() {
 // そこで、人が作って bot に編集者で共有したブックを1冊だけ登録しておき、
 // 押すたびにそこへ日付入りのタブを足していく。過去のタブは消さないので履歴になる。
 function memberExportBookId() { return String(state.memberExportSheetId || "").trim(); }
-function setMemberExportBookId() {
+function memberExportDriveId() { return String(state.memberExportDriveId || "").trim(); }
+// 共有ドライブ（フォルダ）のURLなら「押すたびに新しいファイル」、
+// スプレッドシートのURLなら「押すたびにタブが増える」。貼られたURLの形で振り分ける。
+function setMemberExportTarget() {
+  const now = memberExportDriveId()
+    ? "https://drive.google.com/drive/folders/" + memberExportDriveId()
+    : memberExportBookId() ? "https://docs.google.com/spreadsheets/d/" + memberExportBookId() + "/edit" : "";
   inputDialog(
-    "メンバー一覧を書き出すブックのURL（bot に編集者で共有したもの。空にすると解除）",
-    memberExportBookId(),
+    "書き出し先のURL（共有ドライブのフォルダ＝毎回新しいファイル／スプレッドシート＝毎回タブ追加。空にすると解除）",
+    now,
     v => {
       const raw = String(v || "").trim();
-      if (!raw) { delete state.memberExportSheetId; save(); setStatus("✅ 書き出し先を解除しました", "#2f7d4a"); return; }
-      const m = raw.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
-      const id = m ? m[1] : raw;
-      if (!/^[A-Za-z0-9_-]{20,}$/.test(id)) { setStatus("❌ スプレッドシートのURLを貼ってください", "#b73a4a"); return; }
-      state.memberExportSheetId = id;
-      save();
-      setStatus("✅ 書き出し先を登録しました", "#2f7d4a");
+      if (!raw) {
+        delete state.memberExportDriveId; delete state.memberExportSheetId;
+        save(); setStatus("✅ 書き出し先を解除しました", "#2f7d4a"); return;
+      }
+      const sheet = raw.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
+      const folder = raw.match(/\/folders\/([A-Za-z0-9_-]+)/);
+      if (sheet) {
+        delete state.memberExportDriveId;
+        state.memberExportSheetId = sheet[1];
+        save(); setStatus("✅ このブックにタブを足していきます", "#2f7d4a"); return;
+      }
+      const id = folder ? folder[1] : raw;
+      if (!/^[A-Za-z0-9_-]{15,}$/.test(id)) { setStatus("❌ 共有ドライブかスプレッドシートのURLを貼ってください", "#b73a4a"); return; }
+      delete state.memberExportSheetId;
+      state.memberExportDriveId = id;
+      save(); setStatus("✅ 押すたびにこの共有ドライブへ新しいファイルを作ります", "#2f7d4a");
     }
   );
 }
@@ -1091,20 +1106,21 @@ function memberExportDialog(url, count, shareTo, error) {
     </div>
     ${error ? `<div class="warn" style="margin-bottom:10px">
         スプレッドシートに書き出せませんでした：${escapeHtml(error)}
-        ${/403|permission/i.test(error) ? `<br>新しいブックを作るには、GCPプロジェクト <b>rvss-sheets-backup</b> で
-          <a href="https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=801974032877" target="_blank" rel="noopener">Google Drive API を有効化</a>
-          してください。有効化すれば押すたびに新しいスプレッドシートができます。
-          <br>急ぐときは、スプレッドシートを1つ作って <b>${escapeHtml(SHEETS_BOT_EMAIL)}</b> に編集者で共有し、
-          <span style="cursor:pointer;text-decoration:underline" onclick="closeModal();setMemberExportBookId()">書き出し先を登録</span>
-          すると、そのブックに日付のタブを足していく形でも出せます。` : ""}
+        ${/403|permission|not been used|disabled/i.test(error) ? `<br>共有ドライブに作るには、作成用のサービスアカウントを
+          その共有ドライブのメンバー（コンテンツ管理者）に入れたうえで、
+          <span style="cursor:pointer;text-decoration:underline" onclick="closeModal();setMemberExportTarget()">書き出し先に共有ドライブのURLを登録</span>
+          してください。
+          <br>スプレッドシートのURLを登録した場合は、そのブックに日付のタブを足していく形になります。` : ""}
         <br>CSVでのダウンロードは今でもできます。
       </div>` : `
       <input id="member-export-url" readonly value="${escapeHtml(url)}" onclick="this.select()"/>
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px">
-        ${memberExportBookId()
+        ${memberExportDriveId()
+          ? "共有ドライブに作りました。押すたびに新しいファイルができます。"
+          : memberExportBookId()
           ? "押すたびに日付のタブが増えます。いちばん左が今回のぶんです。"
           : escapeHtml(shareTo) + " に編集者で共有しました。押すたびに新しいブックができます。"}
-        <span style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="closeModal();setMemberExportBookId()">書き出し先を変える</span>
+        <span style="cursor:pointer;text-decoration:underline;margin-left:6px" onclick="closeModal();setMemberExportTarget()">書き出し先を変える</span>
       </div>`}
     <div class="actions">
       <button class="btn" onclick="downloadMemberCsv()">CSVでダウンロード</button>
@@ -1130,13 +1146,22 @@ async function exportMembersToSheet() {
   const p = n => String(n).padStart(2, "0");
   const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}${p(d.getMinutes())}`;
   const bookId = memberExportBookId();
+  const driveId = memberExportDriveId();
+  const title = `RVSSメンバー一覧 ${stamp}`;
   try {
     setStatus("⏳ スプレッドシートに書き出し中…");
-    const data = await callEdgeFn("sheets-pay-export", {
-      // ブックが登録してあればそこへ、無ければ新規作成を試す（権限が無ければ下で拾う）
-      ...(bookId ? { spreadsheetId: bookId } : { bookTitle: `RVSSメンバー一覧 ${stamp}`, shareWith: [shareTo] }),
-      tabs: [{ title: `メンバー一覧 ${stamp}`, rows, headerRowIndex: 0, index: 0 }],
-    });
+    // 共有ドライブが登録してあれば、そこへ毎回新しいファイルを作る。
+    // 所有者はドライブ（＝組織）になるので、1枚ずつ共有しなくても開ける。
+    const data = driveId
+      ? await callEdgeFn("sheets-new-book", {
+          title, folderId: driveId,
+          tabs: [{ title: "メンバー一覧", rows, headerRowIndex: 0 }],
+        })
+      : await callEdgeFn("sheets-pay-export", {
+          // ブックが登録してあればそこへ、無ければ新規作成を試す（権限が無ければ下で拾う）
+          ...(bookId ? { spreadsheetId: bookId } : { bookTitle: title, shareWith: [shareTo] }),
+          tabs: [{ title: `メンバー一覧 ${stamp}`, rows, headerRowIndex: 0, index: 0 }],
+        });
     setStatus(`✅ ${rows.length - 1}名を書き出しました`, "#2f7d4a");
     memberExportDialog(data.url, rows.length - 1, shareTo, "");
   } catch (e) {
