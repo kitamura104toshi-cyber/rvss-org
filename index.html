@@ -34,7 +34,15 @@
     -webkit-font-smoothing: antialiased;
   }
   .wrap { max-width: 1440px; margin: 0 auto; padding: 24px; }
-  h1 { font-size: 22px; margin: 0 0 16px; }
+  h1 { font-size: 22px; margin: 0 0 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 0; }
+  /* 同期ステータスの横。タブを切り替えても消えないよう、見出しの側に置いてある */
+  #refresh-btn {
+    font-size: 13px;
+    font-weight: 400;
+    padding: 7px 16px;
+    margin-left: 12px;
+  }
+  #refresh-btn:disabled { color: var(--muted); cursor: default; }
   .stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -355,7 +363,10 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>RVSS 組織管理 <span id="sync-status" style="font-size:12px;color:var(--muted);font-weight:400;margin-left:8px">⏳ 接続中…</span></h1>
+  <h1>RVSS 組織管理
+    <span id="sync-status" style="font-size:12px;color:var(--muted);font-weight:400;margin-left:8px">⏳ 接続中…</span>
+    <button class="btn" id="refresh-btn" onclick="refreshFromCloud()">最新化</button>
+  </h1>
 
   <div class="stats" id="stats"></div>
   <div class="tabs" id="tabs"></div>
@@ -945,7 +956,7 @@ function save() {
 // 開きっぱなしのページは、ほかの人が直した内容を拾わない。読み直して描き直すだけのボタン。
 // ページ自体は再読み込みしない（?key= が落ちてロールが member に戻る事故を避ける）。
 async function refreshFromCloud() {
-  const btn = document.getElementById("all-refresh-btn");
+  const btn = document.getElementById("refresh-btn");
   if (btn) { btn.disabled = true; btn.textContent = "更新中…"; }
   try {
     setStatus("⏳ 最新を読み込み中…");
@@ -959,9 +970,8 @@ async function refreshFromCloud() {
   } catch (e) {
     setStatus("❌ 更新できませんでした: " + e.message, "#b73a4a");
   }
-  // render() が走ったあとはボタンが作り直されているので、改めて引き直して戻す
-  const again = document.getElementById("all-refresh-btn");
-  if (again) { again.disabled = false; again.textContent = "最新化"; }
+  // 見出しの中なので render() では作り直されない。そのまま同じ要素を戻す。
+  if (btn) { btn.disabled = false; btn.textContent = "最新化"; }
 }
 function applyRemote(remote) {
   if (!remote) return;
@@ -1448,7 +1458,6 @@ function renderContent() {
   } else if (currentTab === "all") {
     tb.innerHTML = `
       <input class="search" id="search" placeholder="メンバー検索（名前・経験・スキル・やりたいこと）…" value="${escapeHtml(allFilterSearch)}" oninput="onAllSearchInput(this.value)" style="min-width:260px"/>
-      <button class="btn" id="all-refresh-btn" onclick="refreshFromCloud()" style="margin-left:6px">最新化</button>
       <button class="btn primary editor-only" onclick="addMember()" style="margin-left:6px">+ メンバーを追加</button>
     `;
     el.innerHTML = renderAll();
