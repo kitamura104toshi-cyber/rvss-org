@@ -1682,12 +1682,14 @@ function renderTransition() {
 //   在籍の起点は説明会参加日。説明会に出ていない人は分母に入れない。
 //   「飛び」（説明会前の離脱）は分母に入っていないので、退会率には混ぜず別枠で数える。
 // 日付は "YYYY-MM-DD" に正規化して文字列のまま比べる（タイムゾーンでずれないため）。
-const ATTRITION_TYPES = ["自主退会", "基準退会", "飛び"];
-// 退会率に数えるのは自主退会と基準退会だけ
+const ATTRITION_TYPES = ["自主退会", "基準退会", "卒業", "飛び"];
+// 退会率に数えるのは自主退会と基準退会だけ。
+// 卒業は在籍を終える点では同じだが、狙ってそうなった抜け方なので率には混ぜず別枠で数える。
 const ATTRITION_COUNTED = ["自主退会", "基準退会"];
 const ATTRITION_TYPE_STYLE = {
   "自主退会": "background:var(--pink);color:var(--pink-text)",
   "基準退会": "background:var(--orange);color:var(--orange-text)",
+  "卒業":     "background:var(--green);color:var(--green-text)",
   "飛び":     "background:#f0eee7;color:var(--muted)",
 };
 let attritionFilter = "all";
@@ -1775,6 +1777,8 @@ function attritionStats(start, end) {
     opening: opening.length,
     left, byType,
     rate: opening.length ? left.length / opening.length : null,
+    // 卒業は分母（期初在籍）には入っていた人なので、離脱から抜いたうえで人数だけ出す
+    graduated: rows.filter(r => inPeriod(r.leftAt) && r.leaveType === "卒業"),
     skipped: rows.filter(r => inPeriod(r.leftAt) && r.leaveType === "飛び"),
     // 入会も在籍と同じ起点で数える。別の日付（採用合格日）で数えると
     // 期初在籍＋入会−離脱＝翌期の期初在籍 が合わなくなる。
@@ -1989,22 +1993,24 @@ function attritionSummaryCard(title, s, note, pager) {
         <div><div style="font-size:11px;color:var(--muted)">期初在籍</div><div style="font-size:22px;font-weight:700">${s.opening}</div></div>
         <div><div style="font-size:11px;color:var(--muted)">離脱</div><div style="font-size:22px;font-weight:700">${s.left.length}</div></div>
         <div><div style="font-size:11px;color:var(--muted)">退会率</div><div style="font-size:22px;font-weight:700">${attritionRateLabel(s)}</div></div>
+        <div><div style="font-size:11px;color:var(--muted)">卒業</div><div style="font-size:22px;font-weight:700">${s.graduated.length}</div></div>
         <div><div style="font-size:11px;color:var(--muted)">飛び</div><div style="font-size:22px;font-weight:700">${s.skipped.length}</div></div>
         <div><div style="font-size:11px;color:var(--muted)">入会（参考）</div><div style="font-size:22px;font-weight:700">${s.joined}</div></div>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${escapeHtml(counted)}</div>
       <div class="section-label">離脱者</div><div style="line-height:2">${attritionNameTags(s.left, true)}</div>
+      <div class="section-label">卒業</div><div style="line-height:2">${attritionNameTags(s.graduated, false)}</div>
       <div class="section-label">飛び</div><div style="line-height:2">${attritionNameTags(s.skipped, false)}</div>
       ${note ? `<div style="font-size:11px;color:var(--orange-text);margin-top:8px">${escapeHtml(note)}</div>` : ""}
     </div>
   `;
 }
 function attritionTable(title, ranges) {
-  const head = ["期間", "期初在籍", "自主退会", "基準退会", "離脱合計", "退会率", "飛び", "入会"];
+  const head = ["期間", "期初在籍", "自主退会", "基準退会", "離脱合計", "退会率", "卒業", "飛び", "入会"];
   const body = ranges.map(r => {
     const s = attritionStats(r.start, r.end);
     const cells = [r.label, s.opening, s.byType["自主退会"].length, s.byType["基準退会"].length,
-      s.left.length, attritionRateLabel(s), s.skipped.length, s.joined];
+      s.left.length, attritionRateLabel(s), s.graduated.length, s.skipped.length, s.joined];
     return `<tr>${cells.map((c, i) =>
       `<td style="padding:6px 10px;border-top:1px solid var(--border);${i ? "text-align:right" : "font-weight:600"}">${escapeHtml(String(c))}</td>`
     ).join("")}</tr>`;
@@ -2102,8 +2108,11 @@ function renderAttrition() {
   const week = weeks[wi];
 
   const inSel = r => r.leftAt && r.leftAt >= sel.start && r.leftAt <= sel.end;
-  const leftList = rows.filter(r => inSel(r) && r.leaveType !== "飛び").sort((a, b) => b.leftAt.localeCompare(a.leftAt));
-  const skipList = rows.filter(r => inSel(r) && r.leaveType === "飛び").sort((a, b) => b.leftAt.localeCompare(a.leftAt));
+  const byLeftDesc = (a, b) => b.leftAt.localeCompare(a.leftAt);
+  // 離脱者一覧は退会率に数えるぶんだけ。卒業と飛びはそれぞれ別の表に出す。
+  const leftList = rows.filter(r => inSel(r) && r.leaveType !== "飛び" && r.leaveType !== "卒業").sort(byLeftDesc);
+  const gradList = rows.filter(r => inSel(r) && r.leaveType === "卒業").sort(byLeftDesc);
+  const skipList = rows.filter(r => inSel(r) && r.leaveType === "飛び").sort(byLeftDesc);
 
   const risks = (state.attrition.risks || []);
   const riskCard = `
@@ -2130,7 +2139,7 @@ function renderAttrition() {
     </div>
     <div class="sync-note">
       在籍の起点は${escapeHtml(basisLabel)}。起点が未入力の人は分母に入れません。
-      飛び（説明会前の離脱）は退会率に含めず、別枠で人数と名前を出しています。
+      飛び（説明会前の離脱）と卒業は退会率に含めず、別枠で人数と名前を出しています。
       ${basis === "briefing" ? "説明会は2026年8月末からなので、それ以前の月は参画日に切り替えないと分母が立ちません。" : ""}
     </div>
     ${warn.length ? `<div class="warn" style="margin-bottom:12px">${warn.map(escapeHtml).join("／")}</div>` : ""}
@@ -2151,6 +2160,8 @@ function renderAttrition() {
     </div>
     ${attritionPersonTable("離脱者一覧", ["氏名", "離脱日", "区分", "理由", "アサイン状況"],
       ["leftAt", "type", "reason", "assign"], leftList, "この期間の離脱者はいません。")}
+    ${attritionPersonTable("卒業一覧", ["氏名", "参画日", "卒業日", "理由", "アサイン状況"],
+      ["enrolledAt", "leftAt", "reason", "assign"], gradList, "この期間の卒業者はいません。")}
     ${attritionPersonTable("飛び一覧", ["氏名", "入会日", "離脱日", "理由", "対応状況"],
       ["joinedAt", "leftAt", "reason", "note"], skipList, "この期間の飛びはいません。")}
     ${attritionPersonTable("離脱日が未入力の退会者", ["氏名", "入会日", "離脱日", "区分", "理由"],
