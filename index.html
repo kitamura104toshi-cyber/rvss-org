@@ -1848,6 +1848,28 @@ function editAttritionDate(name, field, title) {
     setAttritionField(name, field, ymd);
   });
 }
+// 区分を押し間違えたときの戻し口。離脱の記録だけを消して在籍に戻す。
+// 名簿から外れている人（退会扱い）は名簿にも戻す。対応状況のメモは残す。
+function undoAttritionLeave(name) {
+  const e = attritionEntry(name);
+  const deleted = (state.deletedMembers || []).includes(name);
+  const what = [e.leftAt ? "離脱日" : "", e.leaveType, e.leaveReason ? "理由" : ""].filter(Boolean).join("・");
+  confirmDialog(
+    `${name} の離脱の記録${what ? "（" + what + "）" : ""}を取り消して在籍に戻しますか？` +
+    (deleted ? "名簿にも戻します。" : "") + "対応状況のメモは残します。",
+    () => {
+      const cur = ((state.attrition || {}).members || {})[name];
+      if (cur) {
+        const next = { ...cur, updatedAt: new Date().toISOString() };
+        ["leftAt", "leftAtApprox", "leaveType", "leaveReason"].forEach(k => delete next[k]);
+        state.attrition.members[name] = next;
+      }
+      // restoreMember は save/render までやるので、名簿に戻すときはそちらに任せる
+      if (deleted) restoreMember(name); else { save(); render(); }
+      setStatus(`✅ ${name} を在籍に戻しました`, "#2f7d4a");
+    }
+  );
+}
 function editAttritionReason(name) {
   inputDialog(`${name} の離脱理由`, attritionEntry(name).leaveReason, v => setAttritionField(name, "leaveReason", v));
 }
@@ -2058,6 +2080,7 @@ function attritionPersonRow(r, cols) {
   if (cols.includes("reason")) out.push(cell(`<span style="cursor:pointer;color:${r.leaveReason ? "var(--text)" : "var(--accent)"}" onclick="editAttritionReason(${jsArg(r.name)})">${r.leaveReason ? escapeHtml(r.leaveReason) : "書く"}</span>`));
   if (cols.includes("note")) out.push(cell(`<span style="cursor:pointer;color:${r.note ? "var(--text)" : "var(--accent)"}" onclick="editAttritionNote(${jsArg(r.name)})">${r.note ? escapeHtml(r.note) : "書く"}</span>`));
   if (cols.includes("assign")) out.push(cell(`<span style="font-size:11px;color:var(--muted)">${escapeHtml(assignLabel)}</span>`));
+  if (cols.includes("undo")) out.push(cell(`<span style="font-size:11px;color:var(--accent);cursor:pointer;white-space:nowrap" onclick="undoAttritionLeave(${jsArg(r.name)})">在籍に戻す</span>`));
   return `<tr>${out.join("")}</tr>`;
 }
 function attritionPersonTable(title, headers, cols, rows, empty) {
@@ -2140,6 +2163,7 @@ function renderAttrition() {
     <div class="sync-note">
       在籍の起点は${escapeHtml(basisLabel)}。起点が未入力の人は分母に入れません。
       飛び（説明会前の離脱）と卒業は退会率に含めず、別枠で人数と名前を出しています。
+      区分を押し間違えたときは、一覧の区分を選び直すか「在籍に戻す」で記録ごと取り消せます。
       ${basis === "briefing" ? "説明会は2026年8月末からなので、それ以前の月は参画日に切り替えないと分母が立ちません。" : ""}
     </div>
     ${warn.length ? `<div class="warn" style="margin-bottom:12px">${warn.map(escapeHtml).join("／")}</div>` : ""}
@@ -2158,12 +2182,12 @@ function renderAttrition() {
         ${options.map(o => `<option value="${escapeHtml(o.key)}"${o.key === sel.key ? " selected" : ""}>${escapeHtml(o.label)}</option>`).join("")}
       </select>
     </div>
-    ${attritionPersonTable("離脱者一覧", ["氏名", "離脱日", "区分", "理由", "アサイン状況"],
-      ["leftAt", "type", "reason", "assign"], leftList, "この期間の離脱者はいません。")}
-    ${attritionPersonTable("卒業一覧", ["氏名", "参画日", "卒業日", "理由", "アサイン状況"],
-      ["enrolledAt", "leftAt", "reason", "assign"], gradList, "この期間の卒業者はいません。")}
-    ${attritionPersonTable("飛び一覧", ["氏名", "入会日", "離脱日", "理由", "対応状況"],
-      ["joinedAt", "leftAt", "reason", "note"], skipList, "この期間の飛びはいません。")}
+    ${attritionPersonTable("離脱者一覧", ["氏名", "離脱日", "区分", "理由", "アサイン状況", ""],
+      ["leftAt", "type", "reason", "assign", "undo"], leftList, "この期間の離脱者はいません。")}
+    ${attritionPersonTable("卒業一覧", ["氏名", "参画日", "卒業日", "区分", "理由", "アサイン状況", ""],
+      ["enrolledAt", "leftAt", "type", "reason", "assign", "undo"], gradList, "この期間の卒業者はいません。")}
+    ${attritionPersonTable("飛び一覧", ["氏名", "入会日", "離脱日", "区分", "理由", "対応状況", ""],
+      ["joinedAt", "leftAt", "type", "reason", "note", "undo"], skipList, "この期間の飛びはいません。")}
     ${attritionPersonTable("離脱日が未入力の退会者", ["氏名", "入会日", "離脱日", "区分", "理由"],
       ["joinedAt", "leftAt", "type", "reason"], leftNoDate, "ありません。")}
     ${attritionPersonTable(`${basisLabel}が未入力`, ["氏名", "参画日", "説明会参加日", "アサイン状況"],
