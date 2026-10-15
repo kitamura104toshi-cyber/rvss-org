@@ -185,6 +185,7 @@
   /* ===== 閲覧モード ===== */
   body.view-mode .editor-only { display: none !important; }
   body:not(.core-mode) .core-only { display: none !important; }
+  body:not(.admin-mode) .admin-only { display: none !important; }
   body.view-mode .tag.editable { cursor: default; pointer-events: none; }
   body.view-mode .tag.editable:hover { outline: none; }
   body.view-mode .card-title[onclick],
@@ -374,9 +375,9 @@
     <div id="toolbar-left"></div>
     <div>
       <button class="btn" onclick="exportJSON()">JSONエクスポート</button>
-      <button class="btn editor-only" id="sheets-backup-btn" onclick="backupToSheets()">Google Sheetsへバックアップ</button>
+      <button class="btn admin-only" id="sheets-backup-btn" onclick="backupToSheets()">Google Sheetsへバックアップ</button>
       <button class="btn core-only" id="member-export-btn" onclick="exportMembersToSheet()">Googleシートでエクスポート</button>
-      <button class="btn editor-only" onclick="resetData()">初期化</button>
+      <button class="btn admin-only" onclick="resetData()">初期化</button>
     </div>
   </div>
   <div id="content"></div>
@@ -808,8 +809,8 @@ const ROW_ID = "main";
 
 // ====== ロール判定（URLパラメータで切り替え） ======
 // 共有URL: /                     → member（2タブ・編集不可）
-// コアメン: /?key=rvss-core-2026 → core（6タブ・募集の進捗ステータスだけ編集可）
-// 管理者:   /?key=<ADMIN_KEY>    → admin（全タブ・全編集可）
+// コアメン: /?key=rvss-core-2026 → core（報酬タブ以外の全タブ・そこは admin と同じに編集できる）
+// 管理者:   /?key=<ADMIN_KEY>    → admin（全タブ。報酬タブと、初期化・全体バックアップが増えるだけ）
 // キーは index.html に含まれるので機密性の保証ではない。あくまでUI上の出し分けとして扱う。
 const ROLE_KEYS = {
   admin: "kitamura-rvss-admin-2026",
@@ -823,12 +824,14 @@ function resolveRole(key) {
 }
 const ROLE = resolveRole(new URLSearchParams(location.search).get("key"));
 function roleAtLeast(r) { return ROLE_RANK[ROLE] >= ROLE_RANK[r]; }
-// 既存コードは isEditMode を参照し続けるので、admin のエイリアスとして残す
-const isEditMode = ROLE === "admin";
+// 編集できるのは core 以上。コアメンと管理者の違いは、報酬タブが出るかどうかと、
+// 全データを動かす操作（初期化・全体バックアップ）が押せるかどうかだけ（ADMIN_FNS / .admin-only）。
+const isEditMode = roleAtLeast("core");
 
 function applyMode() {
   document.body.classList.toggle("view-mode", !isEditMode);
   document.body.classList.toggle("core-mode", roleAtLeast("core"));
+  document.body.classList.toggle("admin-mode", roleAtLeast("admin"));
   updateModeBadge();
 }
 function updateModeBadge() {
@@ -847,7 +850,7 @@ function updateModeBadge() {
     badge.style.display = "";
   } else if (ROLE === "core") {
     badge.textContent = "コアメンバー";
-    badge.className = "mode-badge view";
+    badge.className = "mode-badge edit";
     badge.style.display = "";
   } else {
     badge.style.display = "none";
@@ -1025,11 +1028,15 @@ function resetData() {
   );
 }
 function exportJSON() {
-  // member は応募者の氏名・メアドを閲覧できないロールなので、エクスポートJSONにも含めない。
+  // 見られないものはエクスポートJSONにも含めない。member は応募者の氏名・メアド、
+  // core は報酬（タブを出していないので、ここから抜けては意味が無い）。
   // state 自体は書き換えず、ディープコピー上でだけ該当フィールドを削除する。
   let data = state;
-  if (!roleAtLeast("core")) {
+  if (!roleAtLeast("admin")) {
     data = JSON.parse(JSON.stringify(state));
+    delete data.compensation;
+  }
+  if (!roleAtLeast("core")) {
     ((data.recruitment && data.recruitment.rows) || []).forEach(row => {
       delete row.studentNames;
       delete row.studentEmails;
@@ -1680,12 +1687,12 @@ function renderTransition() {
 // ====== 退会状況（コアメン以上） ======
 // 定義は「退会状況タブ_要件.md」に合わせてある。
 //   在籍の起点は説明会参加日。説明会に出ていない人は分母に入れない。
-//   「飛び」（説明会前の離脱）は分母に入っていないので、退会率には混ぜず別枠で数える。
+//   「飛び」（説明会前の離脱）も退会率に数える。参画日のある人は分母にも入っている。
 // 日付は "YYYY-MM-DD" に正規化して文字列のまま比べる（タイムゾーンでずれないため）。
 const ATTRITION_TYPES = ["自主退会", "基準退会", "卒業", "飛び"];
-// 退会率に数えるのは自主退会と基準退会だけ。
-// 卒業は在籍を終える点では同じだが、狙ってそうなった抜け方なので率には混ぜず別枠で数える。
-const ATTRITION_COUNTED = ["自主退会", "基準退会"];
+// 退会率に数えるのは自主退会・基準退会・飛びの3つ。
+// 卒業だけは、在籍を終える点では同じでも狙ってそうなった抜け方なので率には混ぜない。
+const ATTRITION_COUNTED = ["自主退会", "基準退会", "飛び"];
 const ATTRITION_TYPE_STYLE = {
   "自主退会": "background:var(--pink);color:var(--pink-text)",
   "基準退会": "background:var(--orange);color:var(--orange-text)",
@@ -1779,7 +1786,6 @@ function attritionStats(start, end) {
     rate: opening.length ? left.length / opening.length : null,
     // 卒業は分母（期初在籍）には入っていた人なので、離脱から抜いたうえで人数だけ出す
     graduated: rows.filter(r => inPeriod(r.leftAt) && r.leaveType === "卒業"),
-    skipped: rows.filter(r => inPeriod(r.leftAt) && r.leaveType === "飛び"),
     // 入会も在籍と同じ起点で数える。別の日付（採用合格日）で数えると
     // 期初在籍＋入会−離脱＝翌期の期初在籍 が合わなくなる。
     joined: rows.filter(r => inPeriod(r[f])).length,
@@ -2016,23 +2022,21 @@ function attritionSummaryCard(title, s, note, pager) {
         <div><div style="font-size:11px;color:var(--muted)">離脱</div><div style="font-size:22px;font-weight:700">${s.left.length}</div></div>
         <div><div style="font-size:11px;color:var(--muted)">退会率</div><div style="font-size:22px;font-weight:700">${attritionRateLabel(s)}</div></div>
         <div><div style="font-size:11px;color:var(--muted)">卒業</div><div style="font-size:22px;font-weight:700">${s.graduated.length}</div></div>
-        <div><div style="font-size:11px;color:var(--muted)">飛び</div><div style="font-size:22px;font-weight:700">${s.skipped.length}</div></div>
         <div><div style="font-size:11px;color:var(--muted)">入会（参考）</div><div style="font-size:22px;font-weight:700">${s.joined}</div></div>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${escapeHtml(counted)}</div>
       <div class="section-label">離脱者</div><div style="line-height:2">${attritionNameTags(s.left, true)}</div>
       <div class="section-label">卒業</div><div style="line-height:2">${attritionNameTags(s.graduated, false)}</div>
-      <div class="section-label">飛び</div><div style="line-height:2">${attritionNameTags(s.skipped, false)}</div>
       ${note ? `<div style="font-size:11px;color:var(--orange-text);margin-top:8px">${escapeHtml(note)}</div>` : ""}
     </div>
   `;
 }
 function attritionTable(title, ranges) {
-  const head = ["期間", "期初在籍", "自主退会", "基準退会", "離脱合計", "退会率", "卒業", "飛び", "入会"];
+  const head = ["期間", "期初在籍", ...ATTRITION_COUNTED, "離脱合計", "退会率", "卒業", "入会"];
   const body = ranges.map(r => {
     const s = attritionStats(r.start, r.end);
-    const cells = [r.label, s.opening, s.byType["自主退会"].length, s.byType["基準退会"].length,
-      s.left.length, attritionRateLabel(s), s.graduated.length, s.skipped.length, s.joined];
+    const cells = [r.label, s.opening, ...ATTRITION_COUNTED.map(t => s.byType[t].length),
+      s.left.length, attritionRateLabel(s), s.graduated.length, s.joined];
     return `<tr>${cells.map((c, i) =>
       `<td style="padding:6px 10px;border-top:1px solid var(--border);${i ? "text-align:right" : "font-weight:600"}">${escapeHtml(String(c))}</td>`
     ).join("")}</tr>`;
@@ -2132,8 +2136,9 @@ function renderAttrition() {
 
   const inSel = r => r.leftAt && r.leftAt >= sel.start && r.leftAt <= sel.end;
   const byLeftDesc = (a, b) => b.leftAt.localeCompare(a.leftAt);
-  // 離脱者一覧は退会率に数えるぶんだけ。卒業と飛びはそれぞれ別の表に出す。
-  const leftList = rows.filter(r => inSel(r) && r.leaveType !== "飛び" && r.leaveType !== "卒業").sort(byLeftDesc);
+  // 離脱者一覧は退会率に数えるぶん（区分未入力も含む）。卒業だけを別の表に分ける。
+  // 飛びはここにも出るが、入会日と対応状況を見るための飛び一覧も下に残してある。
+  const leftList = rows.filter(r => inSel(r) && r.leaveType !== "卒業").sort(byLeftDesc);
   const gradList = rows.filter(r => inSel(r) && r.leaveType === "卒業").sort(byLeftDesc);
   const skipList = rows.filter(r => inSel(r) && r.leaveType === "飛び").sort(byLeftDesc);
 
@@ -2162,7 +2167,7 @@ function renderAttrition() {
     </div>
     <div class="sync-note">
       在籍の起点は${escapeHtml(basisLabel)}。起点が未入力の人は分母に入れません。
-      飛び（説明会前の離脱）と卒業は退会率に含めず、別枠で人数と名前を出しています。
+      飛び（説明会前の離脱）も退会率に数えます。卒業だけは別枠で人数と名前を出しています。
       区分を押し間違えたときは、一覧の区分を選び直すか「在籍に戻す」で記録ごと取り消せます。
       ${basis === "briefing" ? "説明会は2026年8月末からなので、それ以前の月は参画日に切り替えないと分母が立ちません。" : ""}
     </div>
@@ -5076,8 +5081,18 @@ function escapeHtml(s) {
 // 属性内に JS の引数として埋め込む。キーや名前に ' や " が含まれても壊れない。
 function jsArg(s) { return escapeHtml(JSON.stringify(String(s))); }
 
-// admin だけが実行できる操作（メンバー・PJ・部署・スクール・有償枠の編集すべて）
+// admin だけが実行できる操作。
+// 報酬タブは core には出さないので、金額に触る関数はここに残す（タブを隠すだけでは
+// 開発者ツールから呼べてしまう）。初期化と全体バックアップも報酬を含む全データを動かす。
 const ADMIN_FNS = [
+  "editPayMember","savePayMember","importPayBook","dropPayBook",
+  "exportPayToSheets","setPayExportShareTo","setPayExportSheetId",
+  "syncHoursFromNotion","syncWorkNotesFromNotion",
+  "resetData","backupToSheets",
+];
+// core 以上が実行できる操作。プロジェクト・部署・スクール・有償枠・メンバー・退会状況の
+// 編集は admin と同じようにできる。
+const CORE_FNS = [
   "addProject","editProject","saveProject","deleteProject","addToProject","removeFromProject",
   "addPaidMember","removePaidMember",
   "addProjectGroup","deleteProjectGroup","renameProjectGroup","addProjectGroupMember",
@@ -5087,15 +5102,15 @@ const ADMIN_FNS = [
   "addSubGroup","deleteSubGroup","renameSubGroup","addSubGroupMember","removeSubGroupMember",
   "addSchool","deleteSchool","setSchoolLead","addSchoolStudent","removeSchoolStudent",
   "addMember","editMember","saveMemberEdit","deleteMember","restoreMember",
-  "editPayMember","savePayMember","exportPayToSheets","setPayExportShareTo",
   "editSlotMember","saveSlotMember","reorderItem",
   "toggleNdaSigned","toggleOutsourcingSigned",
   "addCustomTab","deleteCustomTab",
-  "resetData",
-  "backupToSheets","syncRecruitment",
+  "syncRecruitment",
+  "setRecruitStatus","setRecruitWebTest","clearRecruitOverride",
+  "setAttritionField","editAttritionDate","editAttritionReason","editAttritionNote",
+  "undoAttritionLeave","addAttritionMember","addAttritionRisk","editAttritionRisk",
+  "removeAttritionRisk","setAttritionBasis","editAttritionAttendanceLine",
 ];
-// core 以上が実行できる操作（募集の進捗ステータスまわりだけ）
-const CORE_FNS = ["setRecruitStatus", "setRecruitWebTest", "clearRecruitOverride"];
 
 const disableFns = (names) => names.forEach(fn => {
   if (typeof window[fn] === "function") {

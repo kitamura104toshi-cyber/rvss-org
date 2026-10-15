@@ -55,7 +55,19 @@ bot は `sheets-backup-bot@rvss-sheets-backup.iam.gserviceaccount.com`。
 ## 権限
 
 `?key=` で決まる3段階。`member` → `core` → `admin`。
-`isEditMode` は admin のみ。`pushToSupabase()` は core 以上。
+
+**core と admin の違いは、報酬タブが出るかどうかと、全データを動かす操作が押せるかどうかだけ。**
+プロジェクト・コミュニティ運営・スクール受講者・有償枠・1on1・退会状況・メンバーの編集は
+core も admin と同じようにできる（`isEditMode = roleAtLeast("core")`）。
+
+- `ADMIN_FNS`（admin だけ）＝ 金額に触る関数と、初期化・全体バックアップ。
+  **報酬タブを出さないだけでは足りない。** 関数は `window` に残るので、開発者ツールから呼べてしまう
+- `.admin-only`（body に `admin-mode` が無ければ非表示）＝ 「初期化」「Google Sheetsへバックアップ」。
+  `.editor-only` は core でも出るようになったので、admin 限定のものはこちらを使う
+- `exportJSON()` は admin 以外では `compensation` を落とす。
+  ここから抜けるならタブを隠す意味が無い。member はさらに応募者の氏名・メアドも落とす
+
+`pushToSupabase()` は core 以上。
 `state = load()` は読み込み失敗時に埋め込みの初期データへ落ちるため、
 `cloudLoaded` が立つまで保存させない（古い状態で上書きする事故を防ぐ）。
 
@@ -304,13 +316,13 @@ Vault に `anthropic_api_key` があればタスク名を要約する。無け�
 メンバー名簿メアド（`1k23DRZ0ztRXmT_MMZhC2jWQ4redXcpiosVSZESlDm9s`）には
 行が無い人もいるため、名簿だけで数えると足りない。
 
-離脱区分は4つ（`ATTRITION_TYPES`）。**退会率に数えるのは自主退会と基準退会だけ**（`ATTRITION_COUNTED`）。
+離脱区分は4つ（`ATTRITION_TYPES`）。**退会率に数えるのは自主退会・基準退会・飛びの3つ**（`ATTRITION_COUNTED`）。
+月次・週次の表の区分の列は `ATTRITION_COUNTED` からそのまま起こしているので、増やせば列も増える。
 
-- **卒業**は在籍を終える点では退会と同じだが、狙ってそうなった抜け方なので率には入れない。
-  分母（期初在籍）には入っていた人なので、飛びとは違って在籍の数え方には影響する
-- **飛び**は説明会前の離脱で、分母にもともと入っていない
-
-どちらもカードと月次・週次の表に人数を別枠で出し、一覧は離脱者・卒業・飛びの3つに分けている。
+- **飛び**は説明会前の離脱。起点を参画日にしている以上その人も分母に入っているので、率にも数える。
+  入会日と対応状況を見るための飛び一覧は別に残してあり、離脱者一覧と中身が重なる
+- **卒業**だけは率に入れない。在籍を終える点では同じでも、狙ってそうなった抜け方のため。
+  分母には入っていた人なので、在籍の数え方には普通に効く。カードと表に人数を別枠で出す
 
 **区分は押し間違えても戻せる。** どの一覧にも区分のプルダウンと「在籍に戻す」（`undoAttritionLeave`）を出してある。
 戻すと `leftAt` / `leftAtApprox` / `leaveType` / `leaveReason` を消し、`deletedMembers` に入っていれば
