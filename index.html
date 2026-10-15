@@ -1062,8 +1062,9 @@ function memberExportRows() {
   // 社会人メンター（BS）は学生メンバーの一覧とは別枠なので外す。
   // ヘッダーの「総メンバー数」も同じ数え方。
   const names = Object.keys(map).filter(n => !isBSMember(n)).sort(byEnrolledDesc);
-  // 並び順の根拠が見えないと確かめようがないので、入会日も列に出す
-  const rows = [["氏名", "入会日", "大学", "エリア", "アサイン状況"]];
+  // Slack と LINE はまだ取り込み先が無いので全員空になる。列だけ先に置いておけば、
+  // memberOverrides に slackAccount / lineName が入りしだい勝手に埋まる。
+  const rows = [["氏名", "大学", "入会日", "個人メアド", "RVSSメアド", "NDA", "アサイン状況", "Slack", "LINE"]];
   names.forEach(n => {
     const mi = memberInfo(n) || {};
     const info = map[n] || {};
@@ -1072,10 +1073,14 @@ function memberExportRows() {
       [].concat(info.depts || [], info.pjs || []).map(coarseAssignName).filter(Boolean)));
     rows.push([
       n,
-      enrolledAtOf(n).replace(/-/g, "/"),
       String(mi.university || "").trim(),
-      String(mi.area || "").trim(),
+      enrolledAtOf(n).replace(/-/g, "/"),
+      String(mi.personalEmail || "").trim(),
+      String(mi.rvssEmail || "").trim(),
+      mi.ndaSigned ? "締結済み" : "未締結",
       (state.deletedMembers || []).includes(n) ? "退会済み" : (tags.length ? tags.join("・") : "未アサイン"),
+      String(mi.slackAccount || "").trim(),
+      String(mi.lineName || "").trim(),
     ]);
   });
   return rows;
@@ -1150,7 +1155,7 @@ function memberExportDialog(url, count, shareTo, error, shareNote) {
   openModal(`
     <h3>メンバー一覧を書き出しました</h3>
     <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
-      ${count}名／氏名・入会日・大学・エリア・アサイン状況（入会日の新しい順）
+      ${count}名／氏名・大学・入会日・個人メアド・RVSSメアド・NDA・アサイン状況・Slack・LINE（入会日の新しい順）
     </div>
     ${error ? `<div class="warn" style="margin-bottom:10px">
         スプレッドシートに書き出せませんでした：${escapeHtml(error)}
@@ -1687,7 +1692,7 @@ function renderTransition() {
 // ====== 退会状況（コアメン以上） ======
 // 定義は「退会状況タブ_要件.md」に合わせてある。
 //   在籍の起点は説明会参加日。説明会に出ていない人は分母に入れない。
-//   「飛び」（説明会前の離脱）も退会率に数える。参画日のある人は分母にも入っている。
+//   「飛び」（説明会前の離脱）も退会率に数える。入会日のある人は分母にも入っている。
 // 日付は "YYYY-MM-DD" に正規化して文字列のまま比べる（タイムゾーンでずれないため）。
 const ATTRITION_TYPES = ["自主退会", "基準退会", "卒業", "飛び"];
 // 退会率に数えるのは自主退会・基準退会・飛びの3つ。
@@ -1726,7 +1731,7 @@ function attritionEntry(name) {
   const mi = memberInfo(name) || {};
   return {
     briefingAt: toYmd(e.briefingAt),
-    // 参画日（メンバー名簿メアド）。説明会は8月末からしか無いので、
+    // 入会日（メンバー名簿メアド）。説明会は8月末からしか無いので、
     // それ以前の月の在籍を数えるにはこちらを起点にするしかない。
     enrolledAt: toYmd(e.enrolledAt),
     joinedAt: toYmd(e.joinedAt || mi.joinedAt),
@@ -1753,12 +1758,12 @@ function attritionRows() {
 }
 
 // 在籍の起点をどちらで数えるか。要件は説明会参加日だが、説明会は2026年8月末からしか
-// 実施していないので、それ以前の月は参画日（名簿）でないと分母が立たない。
+// 実施していないので、それ以前の月は入会日（名簿）でないと分母が立たない。
 const ATTRITION_BASES = {
   briefing: { label: "説明会参加日", field: "briefingAt" },
-  enrolled: { label: "参画日（名簿）", field: "enrolledAt" },
+  enrolled: { label: "入会日（名簿）", field: "enrolledAt" },
 };
-// 既定は参画日。説明会は2026年8月末からしか無く、それ以前の月の分母が立たないため。
+// 既定は入会日。説明会は2026年8月末からしか無く、それ以前の月の分母が立たないため。
 function attritionBasis() {
   return ATTRITION_BASES[(state.attrition || {}).basis] ? state.attrition.basis : "enrolled";
 }
@@ -1938,7 +1943,7 @@ function editAttritionAttendanceLine() {
     save(); render();
   });
 }
-// 入会日（＝参画日）。退会状況タブと同じ値を見る。
+// 入会日。退会状況タブと同じ値（attrition.enrolledAt）を見る。
 function enrolledAtOf(name) {
   return toYmd(((((state.attrition || {}).members) || {})[name] || {}).enrolledAt);
 }
@@ -2077,7 +2082,7 @@ function attritionPersonRow(r, cols) {
     cell(`<span class="name-link" style="font-weight:600" onclick="goToMemberCard(${jsArg(r.name)})">${escapeHtml(r.name)}</span>`),
   ];
   if (cols.includes("joinedAt")) out.push(dateCell("joinedAt", "入会日"));
-  if (cols.includes("enrolledAt")) out.push(dateCell("enrolledAt", "参画日"));
+  if (cols.includes("enrolledAt")) out.push(dateCell("enrolledAt", "入会日"));
   if (cols.includes("briefingAt")) out.push(dateCell("briefingAt", "説明会参加日"));
   if (cols.includes("leftAt")) out.push(dateCell("leftAt", "離脱日"));
   if (cols.includes("type")) out.push(cell(attritionTypeSelect(r.name, r.leaveType)));
@@ -2169,7 +2174,7 @@ function renderAttrition() {
       在籍の起点は${escapeHtml(basisLabel)}。起点が未入力の人は分母に入れません。
       飛び（説明会前の離脱）も退会率に数えます。卒業だけは別枠で人数と名前を出しています。
       区分を押し間違えたときは、一覧の区分を選び直すか「在籍に戻す」で記録ごと取り消せます。
-      ${basis === "briefing" ? "説明会は2026年8月末からなので、それ以前の月は参画日に切り替えないと分母が立ちません。" : ""}
+      ${basis === "briefing" ? "説明会は2026年8月末からなので、それ以前の月は入会日（名簿）に切り替えないと分母が立ちません。" : ""}
     </div>
     ${warn.length ? `<div class="warn" style="margin-bottom:12px">${warn.map(escapeHtml).join("／")}</div>` : ""}
     <div class="grid" style="margin-bottom:16px">
@@ -2189,13 +2194,13 @@ function renderAttrition() {
     </div>
     ${attritionPersonTable("離脱者一覧", ["氏名", "離脱日", "区分", "理由", "アサイン状況", ""],
       ["leftAt", "type", "reason", "assign", "undo"], leftList, "この期間の離脱者はいません。")}
-    ${attritionPersonTable("卒業一覧", ["氏名", "参画日", "卒業日", "区分", "理由", "アサイン状況", ""],
+    ${attritionPersonTable("卒業一覧", ["氏名", "入会日", "卒業日", "区分", "理由", "アサイン状況", ""],
       ["enrolledAt", "leftAt", "type", "reason", "assign", "undo"], gradList, "この期間の卒業者はいません。")}
     ${attritionPersonTable("飛び一覧", ["氏名", "入会日", "離脱日", "区分", "理由", "対応状況", ""],
-      ["joinedAt", "leftAt", "type", "reason", "note", "undo"], skipList, "この期間の飛びはいません。")}
+      ["enrolledAt", "leftAt", "type", "reason", "note", "undo"], skipList, "この期間の飛びはいません。")}
     ${attritionPersonTable("離脱日が未入力の退会者", ["氏名", "入会日", "離脱日", "区分", "理由"],
-      ["joinedAt", "leftAt", "type", "reason"], leftNoDate, "ありません。")}
-    ${attritionPersonTable(`${basisLabel}が未入力`, ["氏名", "参画日", "説明会参加日", "アサイン状況"],
+      ["enrolledAt", "leftAt", "type", "reason"], leftNoDate, "ありません。")}
+    ${attritionPersonTable(`${basisLabel}が未入力`, ["氏名", "入会日", "説明会参加日", "アサイン状況"],
       ["enrolledAt", "briefingAt", "assign"], noBriefing, "全員入力済みです。")}
     ${attritionAttendanceCard(rows)}
     ${riskCard}
@@ -4941,14 +4946,14 @@ function contractRemainingHTML(mi) {
   `;
 }
 // 前月稼働時間（Notionの稼働管理表と連携して自動反映される想定。手動編集も可）
-// メアドと参画日。メンバー名簿メアドから取り込んだもので、出すのはコアメン以上だけ。
+// メアドと入会日。メンバー名簿メアドから取り込んだもので、出すのはコアメン以上だけ。
 // 値が無い行は作らない（「未設定」が並ぶと読みにくいため）。
 function memberBasicsHTML(name, mi) {
   const enrolled = toYmd((((state.attrition || {}).members || {})[name] || {}).enrolledAt);
   const rows = [
     ["個人メアド", (mi.personalEmail || "").trim()],
     ["RVSSメアド", (mi.rvssEmail || "").trim()],
-    ["参画日", enrolled ? enrolled.replace(/-/g, "/") : ""],
+    ["入会日", enrolled ? enrolled.replace(/-/g, "/") : ""],
   ].filter(r => r[1]);
   if (rows.length === 0) return "";
   return `
@@ -5079,12 +5084,15 @@ function saveMemberEdit(oldName) {
   // 編集フォームに無い項目（契約状況・BSバッジ・スキル分類・Notionから取り込んだ稼働時間など）は
   // 元の値を引き継ぐ。ここでオブジェクトを作り直すと、フォームに無い値が編集のたびに消える。
   const kept = state.memberOverrides[newName] || {};
-  const { ndaSigned, outsourcingSigned, isBS, skillCategories, hoursByMonth } = kept;
-  if (!univ && !area && !status && !contractStartDate && !availableUntil && !availableUntilNote && !tenureIntent && !handoverNeeded && lastMonthHours == null && !experience && !skills && !wantToDo && !hobby && !admires && !ndaSigned && !outsourcingSigned && !isBS && !skillCategories && !hoursByMonth) {
-    delete state.memberOverrides[newName];
-  } else {
-    state.memberOverrides[newName] = { ...kept, university: univ, area: area, status, contractStartDate, availableUntil, availableUntilNote, tenureIntent, handoverNeeded, lastMonthHours, experience, skills, wantToDo, hobby, admires };
-  }
+  const next = { ...kept, university: univ, area: area, status, contractStartDate, availableUntil,
+    availableUntilNote, tenureIntent, handoverNeeded, lastMonthHours, experience, skills, wantToDo, hobby, admires };
+  // 中身が何も残らなければ override ごと消す。
+  // 項目名を並べて判定すると、フォームに無いもの（メアド・Slack・LINE など）を数え忘れて、
+  // それだけ持っている人が編集のたびに消える。実際の中身で見る。
+  const hasValue = Object.values(next).some(v =>
+    v != null && v !== "" && !(typeof v === "object" && Object.keys(v).length === 0));
+  if (hasValue) state.memberOverrides[newName] = next;
+  else delete state.memberOverrides[newName];
   save(); closeModal(); render();
 }
 
