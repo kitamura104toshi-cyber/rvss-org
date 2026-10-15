@@ -4176,8 +4176,14 @@ function renderSchool(s, i) {
         <button class="btn editor-only" onclick="setSchoolLead(${i},'tl')">変更</button>
       </div>
       <div class="slot">
-        <div><div class="name name-link" onclick='goToMemberCard("${s.subTl||""}")' title="クリックでメンバーカードへ">${escapeHtml(s.subTl||"")}</div><div class="role">副TL</div></div>
-        <button class="btn editor-only" onclick="setSchoolLead(${i},'subTl')">変更</button>
+        <div>${s.subTl
+          ? `<div class="name name-link" onclick="goToMemberCard(${jsArg(s.subTl)})" title="クリックでメンバーカードへ">${escapeHtml(s.subTl)}</div>`
+          : `<div class="name" style="color:var(--muted);font-weight:400">未設定</div>`}
+          <div class="role">副TL</div></div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <button class="btn editor-only" onclick="setSchoolLead(${i},'subTl')">${s.subTl ? "変更" : "設定"}</button>
+          ${s.subTl ? `<button class="icon-btn editor-only" onclick="clearSchoolSubTl(${i})" title="副TLを外す">×</button>` : ""}
+        </div>
       </div>
       <div class="section-label">受講者</div>
       ${s.students.map(n => `
@@ -4206,6 +4212,14 @@ function deleteSchool(i) {
 function setSchoolLead(i, key) {
   pickMember(key === "tl" ? "TLを選択" : "副TLを選択", (n) => {
     state.schools[i][key] = n; save(); render();
+  });
+}
+// 副TLは置かないスクールもあるので外せる。TLは必ず1人いる前提なので外し口は作らない。
+function clearSchoolSubTl(i) {
+  const sc = state.schools[i];
+  if (!sc || !sc.subTl) return;
+  confirmDialog(`${sc.name} の副TL（${sc.subTl}）を外しますか？`, () => {
+    sc.subTl = ""; save(); render();
   });
 }
 function addSchoolStudent(i) {
@@ -5100,7 +5114,7 @@ const CORE_FNS = [
   "addDept","renameDept","addDeptLead","removeDeptLead",
   "addGroup","deleteGroup","renameGroup","addGroupMember","removeGroupMember",
   "addSubGroup","deleteSubGroup","renameSubGroup","addSubGroupMember","removeSubGroupMember",
-  "addSchool","deleteSchool","setSchoolLead","addSchoolStudent","removeSchoolStudent",
+  "addSchool","deleteSchool","setSchoolLead","clearSchoolSubTl","addSchoolStudent","removeSchoolStudent",
   "addMember","editMember","saveMemberEdit","deleteMember","restoreMember",
   "editSlotMember","saveSlotMember","reorderItem",
   "toggleNdaSigned","toggleOutsourcingSigned",
