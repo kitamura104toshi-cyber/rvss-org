@@ -213,7 +213,13 @@ PJ名の表記はタブによって違う（アプリは「高校」、8月の�
 | 月 | 修正前（支払済） | 修正版 |
 |---|---|---|
 | 2026-08 | `1xfXvUTtLVikqQbRnV6r85e110NFXUtMITl207GGRVe8` | `1F6h9K-pEHRRAArELMx608BeCk6qcPiO4klyNC4-uJkY` |
-| 2026-09 | `1qrkqPe4cbg75ouBnSk9Hbiz_BfFbp8C05JZyDM0deyw` | `1r8j3Mm8SAve9lDUXJocVPxa93pNXCLn6` |
+| 2026-09 | `1qrkqPe4cbg75ouBnSk9Hbiz_BfFbp8C05JZyDM0deyw` | `1po5T0--0D0PxUV9MYKL8hbzOehmoFesIiNQsA8ZK0vw` |
+| 2026-10 | （まだ無い） | `1KRgMoVIaoPXG-Jrp6Q7CKLahGIVjKHBdIBOGVu-UWmE` |
+
+**9月の修正版はxlsxから変換した時点でIDが変わっている。**
+変換前の `1r8j3Mm8SAve9lDUXJocVPxa93pNXCLn6` はもう使わない（`exportSheets` は差し替え済み）。
+10月の `exportSheets` はすでに「10月以降報酬」を指していて、タブは
+報酬一覧／按分／業務内容／全メンバー。月ごとにブックを作り直すのではなく、これを使う前提。
 
 8月・9月とも修正版を `compensation.bookRows` に取り込んであり、有償枠タブは‹ ›で両方見られる。
 
@@ -225,6 +231,31 @@ xlsxのままDriveに置かれたファイルは Sheets API から読めない
 （`This operation is not supported for this document. The document must not be an Office file.`）。
 Driveで「Googleスプレッドシートとして保存」に変換してもらう。変換すると新しいIDになり、共有も
 引き継がれないので、サービスアカウントを編集者で入れ直してもらうこと。
+`報酬金額` に置いてある採用コストのxlsx 2本（`15sBcm9Rfg-OEca7AzOuqSc6zTiAKd0Xv` /
+`1g6BjdBBtk2A3fblAAMwdNXF7GZqDwp-x`）が未変換のまま。変換済みのほうは
+`17vlsv5_LybpGqX9ravkk87iXH_Tsy71_a6G5yxAwvPc`。
+
+## 報酬のファイルは共有ドライブ「報酬」にある
+
+**共有ドライブ「報酬」＝ `0AHXJ9EpzoQh8Uk9PVA`。** メンバー一覧の書き出し先
+`0ABTnfKxVk-GFUk9PVA`（アサイン管理表）とは別のドライブ。
+
+    報酬（ドライブ 0AHXJ9EpzoQh8Uk9PVA）
+    └ RVSS 報酬          1wvDI07Fo-TXYJk1DAyG6sfD02cmaueWP
+       ├ 報酬金額         1rYURj99fAMGST8ahGLPdxeXFFE-jmFZ5  ← ブックは全部ここ直下
+       │  └ 2026‐8月報酬 / 2026-9月報酬 / 2026-10月報酬（2026-10-16 時点でどれも空）
+       └ 報酬制度         1n5OKAzNAdyCGy8kUqqI8DXpnSGhnn3SE
+          └ RVSS_人数按分モデル 175Dnd5WY4HXtWQokynnn6Mdvqd4_vvrAcDMCtrcKvs4
+
+**マイドライブではないので、bot が作ったブックも所有者は組織（ドライブ）になる。**
+bot はコンテンツ管理者相当で、作成・編集・ゴミ箱は可、メンバー管理と完全削除は不可。
+`sheets-new-book` の `folderId` にはドライブIDでもフォルダIDでも渡せる。
+
+**共有ドライブのIDは、メンバーでないアカウントからは404になる。**
+個人アカウント（Driveコネクタ）で引けなくても、無いとは限らない。中身は bot で引くこと。
+
+`報酬金額` には上の表のブック以外に、採用コストと「10月有償メンバー」（`シート1` だけの
+手元メモ、`1kaMSdFL8gXXaQ66JVSxHDvRg4Wvte8B-Yh9qTkZAhYs`）も入っている。アプリは参照していない。
 
 ## メンバー一覧の書き出し
 
