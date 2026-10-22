@@ -1064,7 +1064,7 @@ function memberExportRows() {
   const names = Object.keys(map).filter(n => !isBSMember(n)).sort(byEnrolledDesc);
   // Slack と LINE はまだ取り込み先が無いので全員空になる。列だけ先に置いておけば、
   // memberOverrides に slackAccount / lineName が入りしだい勝手に埋まる。
-  const rows = [["氏名", "大学", "入会日", "個人メアド", "RVSSメアド", "NDA", "アサイン状況", "Slack", "LINE"]];
+  const rows = [["氏名", "ステータス", "大学", "入会日", "個人メアド", "RVSSメアド", "NDA", "アサイン状況", "Slack", "LINE"]];
   names.forEach(n => {
     const mi = memberInfo(n) || {};
     const info = map[n] || {};
@@ -1073,6 +1073,7 @@ function memberExportRows() {
       [].concat(info.depts || [], info.pjs || []).map(coarseAssignName).filter(Boolean)));
     rows.push([
       n,
+      memberStatusLabel(n),
       String(mi.university || "").trim(),
       enrolledAtOf(n).replace(/-/g, "/"),
       String(mi.personalEmail || "").trim(),
@@ -1155,7 +1156,7 @@ function memberExportDialog(url, count, shareTo, error, shareNote) {
   openModal(`
     <h3>メンバー一覧を書き出しました</h3>
     <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
-      ${count}名／氏名・大学・入会日・個人メアド・RVSSメアド・NDA・アサイン状況・Slack・LINE（入会日の新しい順）
+      ${count}名／氏名・ステータス・大学・入会日・個人メアド・RVSSメアド・NDA・アサイン状況・Slack・LINE（入会日の新しい順）
     </div>
     ${error ? `<div class="warn" style="margin-bottom:10px">
         スプレッドシートに書き出せませんでした：${escapeHtml(error)}
@@ -1943,6 +1944,17 @@ function editAttritionAttendanceLine() {
     save(); render();
   });
 }
+// 名簿に出すステータス。強いものから順に見る。
+// 休会は memberOverrides.status の自由記述（「休会中」など）から拾う。
+// 卒業は退会状況タブの区分。名簿からは外していないので、ここで見ないと在籍のまま出てしまう。
+function memberStatusLabel(name) {
+  if ((state.deletedMembers || []).includes(name)) return "退会";
+  const e = (((state.attrition || {}).members) || {})[name] || {};
+  if (e.leftAt && e.leaveType === "卒業") return "卒業";
+  if (e.leftAt) return "退会";
+  if (/休会/.test(String((memberInfo(name) || {}).status || ""))) return "休会";
+  return "在籍";
+}
 // 入会日。退会状況タブと同じ値（attrition.enrolledAt）を見る。
 function enrolledAtOf(name) {
   return toYmd(((((state.attrition || {}).members) || {})[name] || {}).enrolledAt);
@@ -2058,6 +2070,29 @@ function attritionTable(title, ranges) {
     </div>
   `;
 }
+// 離脱理由。選べるようにしておくと表記がそろう。
+// 当てはまらないものは「その他（自由入力）」から書けるので、選択肢で縛ってはいない。
+const ATTRITION_REASONS = [
+  "学業が忙しい", "就職・インターン", "他の活動を優先", "体調・家庭の事情",
+  "ミスマッチ・意欲低下", "稼働基準を満たせず", "連絡が取れない",
+];
+const ATTRITION_REASON_OTHER = "__other__";
+function attritionReasonSelect(name, current) {
+  const cur = String(current || "");
+  // 選択肢に無い理由（以前の自由入力）も、選択肢として並べて選ばれた状態にする
+  const list = ATTRITION_REASONS.concat(cur && !ATTRITION_REASONS.includes(cur) ? [cur] : []);
+  const opts = [""].concat(list).map(t =>
+    `<option value="${escapeHtml(t)}"${t === cur ? " selected" : ""}>${escapeHtml(t || "理由未入力")}</option>`).join("")
+    + `<option value="${ATTRITION_REASON_OTHER}">その他（自由入力）…</option>`;
+  const style = cur ? "background:#f5f3ed;color:var(--text)" : "background:#fff;color:var(--muted);border:1px solid var(--border)";
+  return `<select class="recruit-select" style="${style}" onchange="setAttritionReason(${jsArg(name)},this.value)">${opts}</select>`;
+}
+function setAttritionReason(name, v) {
+  if (v !== ATTRITION_REASON_OTHER) { setAttritionField(name, "leaveReason", v); return; }
+  // 先に描き直して選択を元に戻してから聞く。入力をやめても「その他」が選ばれたままにならない。
+  render();
+  editAttritionReason(name);
+}
 function attritionTypeSelect(name, current) {
   const opts = [""].concat(ATTRITION_TYPES).map(t =>
     `<option value="${escapeHtml(t)}"${t === current ? " selected" : ""}>${escapeHtml(t || "区分未入力")}</option>`).join("");
@@ -2086,7 +2121,7 @@ function attritionPersonRow(r, cols) {
   if (cols.includes("briefingAt")) out.push(dateCell("briefingAt", "説明会参加日"));
   if (cols.includes("leftAt")) out.push(dateCell("leftAt", "離脱日"));
   if (cols.includes("type")) out.push(cell(attritionTypeSelect(r.name, r.leaveType)));
-  if (cols.includes("reason")) out.push(cell(`<span style="cursor:pointer;color:${r.leaveReason ? "var(--text)" : "var(--accent)"}" onclick="editAttritionReason(${jsArg(r.name)})">${r.leaveReason ? escapeHtml(r.leaveReason) : "書く"}</span>`));
+  if (cols.includes("reason")) out.push(cell(attritionReasonSelect(r.name, r.leaveReason)));
   if (cols.includes("note")) out.push(cell(`<span style="cursor:pointer;color:${r.note ? "var(--text)" : "var(--accent)"}" onclick="editAttritionNote(${jsArg(r.name)})">${r.note ? escapeHtml(r.note) : "書く"}</span>`));
   if (cols.includes("assign")) out.push(cell(`<span style="font-size:11px;color:var(--muted)">${escapeHtml(assignLabel)}</span>`));
   if (cols.includes("undo")) out.push(cell(`<span style="font-size:11px;color:var(--accent);cursor:pointer;white-space:nowrap" onclick="undoAttritionLeave(${jsArg(r.name)})">在籍に戻す</span>`));
@@ -5129,7 +5164,7 @@ const CORE_FNS = [
   "addCustomTab","deleteCustomTab",
   "syncRecruitment",
   "setRecruitStatus","setRecruitWebTest","clearRecruitOverride",
-  "setAttritionField","editAttritionDate","editAttritionReason","editAttritionNote",
+  "setAttritionField","editAttritionDate","editAttritionReason","setAttritionReason","editAttritionNote",
   "undoAttritionLeave","addAttritionMember","addAttritionRisk","editAttritionRisk",
   "removeAttritionRisk","setAttritionBasis","editAttritionAttendanceLine",
 ];
