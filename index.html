@@ -1057,33 +1057,50 @@ const SHEETS_BOT_EMAIL = "sheets-backup-bot@rvss-sheets-backup.iam.gserviceaccou
 // 押すたびに新しいブックを作る。過去に出したものを上書きしないので、
 // 「いつ時点の一覧か」がファイルとして残る。
 // 載せるのはメンバー情報だけ（大学・エリア・アサイン状況）。報酬や契約状況は入れない。
+// 名簿として書き出す列。書き出しボタンとバックアップのメンバー一覧で同じものを使う。
+// 見出しと値の作り方を1か所にまとめてあるので、足すならここだけ直す。
+const MEMBER_SHEET_COLUMNS = [
+  ["氏名", (n) => n],
+  ["ふりがな", (n, mi) => mi.kana],
+  ["ステータス", (n) => memberStatusLabel(n)],
+  ["枠", (n) => isPaidMember(n) ? "有償" : "無償"],
+  ["メンバーID", (n, mi) => mi.memberId],
+  ["大学・学校", (n, mi) => mi.university],
+  ["学部・学科", (n, mi) => mi.faculty],
+  ["学年", (n, mi) => mi.gradeYear ? mi.gradeYear + "年" : ""],
+  ["エリア", (n, mi) => mi.area],
+  ["入会日", (n) => ymdSlash(enrolledAtOf(n))],
+  ["生年月日", (n, mi) => ymdSlash(toYmd(mi.birthday))],
+  ["個人メアド", (n, mi) => mi.personalEmail],
+  ["RVSSメアド", (n, mi) => mi.rvssEmail],
+  ["NDA送付", (n, mi) => mi.ndaSent ? "送付済み" : ""],
+  ["NDA締結", (n, mi) => mi.ndaSigned ? "締結済み" : "未締結"],
+  ["Slack招待", (n, mi) => mi.slackInvite],
+  ["Slack参加", (n, mi) => mi.slackJoined],
+  ["LINE表示名", (n, mi) => mi.lineName],
+  ["アサイン状況", (n, mi, info) => {
+    if ((state.deletedMembers || []).includes(n)) return "退会済み";
+    const tags = Array.from(new Set(
+      [].concat(info.depts || [], info.pjs || []).map(coarseAssignName).filter(Boolean)));
+    return tags.length ? tags.join("・") : "未アサイン";
+  }],
+  ["備考", (n, mi) => mi.rosterNote],
+];
+function memberSheetRow(n, info) {
+  const mi = memberInfo(n) || {};
+  return MEMBER_SHEET_COLUMNS.map(c => {
+    const v = c[1](n, mi, info || {});
+    return v == null ? "" : String(v).trim();
+  });
+}
 function memberExportRows() {
   const map = buildMemberMap();
   // 社会人メンター（BS）は学生メンバーの一覧とは別枠なので外す。
   // ヘッダーの「総メンバー数」も同じ数え方。
   const names = Object.keys(map).filter(n => !isBSMember(n)).sort(byEnrolledDesc);
-  // Slack と LINE はまだ取り込み先が無いので全員空になる。列だけ先に置いておけば、
-  // memberOverrides に slackAccount / lineName が入りしだい勝手に埋まる。
-  const rows = [["氏名", "ステータス", "大学", "入会日", "個人メアド", "RVSSメアド", "NDA", "アサイン状況", "Slack", "LINE"]];
-  names.forEach(n => {
-    const mi = memberInfo(n) || {};
-    const info = map[n] || {};
-    // 役割の括弧やグループ名を落として、所属の名前だけを並べる
-    const tags = Array.from(new Set(
-      [].concat(info.depts || [], info.pjs || []).map(coarseAssignName).filter(Boolean)));
-    rows.push([
-      n,
-      memberStatusLabel(n),
-      String(mi.university || "").trim(),
-      enrolledAtOf(n).replace(/-/g, "/"),
-      String(mi.personalEmail || "").trim(),
-      String(mi.rvssEmail || "").trim(),
-      mi.ndaSigned ? "締結済み" : "未締結",
-      (state.deletedMembers || []).includes(n) ? "退会済み" : (tags.length ? tags.join("・") : "未アサイン"),
-      String(mi.slackAccount || "").trim(),
-      String(mi.lineName || "").trim(),
-    ]);
-  });
+  // 名簿から取り込んだ項目をひととおり出す。並びはバックアップのメンバー一覧と同じ。
+  const rows = [MEMBER_SHEET_COLUMNS.map(c => c[0])];
+  names.forEach(n => rows.push(memberSheetRow(n, map[n] || {})));
   return rows;
 }
 // サービスアカウントには Drive にファイルを作る権限が無く、新規ブックの作成は 403 で落ちる。
@@ -1156,7 +1173,7 @@ function memberExportDialog(url, count, shareTo, error, shareNote) {
   openModal(`
     <h3>メンバー一覧を書き出しました</h3>
     <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
-      ${count}名／氏名・ステータス・大学・入会日・個人メアド・RVSSメアド・NDA・アサイン状況・Slack・LINE（入会日の新しい順）
+      ${count}名／${MEMBER_SHEET_COLUMNS.length}列（${MEMBER_SHEET_COLUMNS.map(c => c[0]).join("・")}）・入会日の新しい順
     </div>
     ${error ? `<div class="warn" style="margin-bottom:10px">
         スプレッドシートに書き出せませんでした：${escapeHtml(error)}
@@ -1471,6 +1488,7 @@ function renderContent() {
   } else if (currentTab === "all") {
     tb.innerHTML = `
       <input class="search" id="search" placeholder="メンバー検索（名前・経験・スキル・やりたいこと）…" value="${escapeHtml(allFilterSearch)}" oninput="onAllSearchInput(this.value)" style="min-width:260px"/>
+      <button class="btn editor-only" id="roster-btn" onclick="importRoster()" style="margin-left:6px">名簿から取り込む</button>
       <button class="btn primary editor-only" onclick="addMember()" style="margin-left:6px">+ メンバーを追加</button>
     `;
     el.innerHTML = renderAll();
@@ -1955,6 +1973,157 @@ function memberStatusLabel(name) {
   if (/休会/.test(String((memberInfo(name) || {}).status || ""))) return "休会";
   return "在籍";
 }
+// ====== 名簿（人事ダッシュボードの「メンバー名簿」タブ）からの取り込み ======
+// 列は増える前提なので、位置ではなく見出し名で引く。見出しが変わったらここだけ直す。
+const ROSTER_BOOK_ID_DEFAULT = "1SrKO3GjNj8Vnt3dCrgQmoNoMToGF2XJp41-ldgSwFSY";
+const ROSTER_TAB = "メンバー名簿";
+const ROSTER_NAME_COL = "氏名（フルネーム）";
+// 見出し → memberOverrides のキー。ここに無い列は取り込まない。
+// 所属PJ・所属部署・有償はアプリ側が正本なので入れない（食い違いは報告だけする）。
+const ROSTER_FIELDS = [
+  ["大学名・学校名", "university", "text"],
+  ["学部・学科", "faculty", "text"],
+  ["学年", "gradeYear", "num"],
+  ["エリア", "area", "text"],
+  ["個人メールアドレス", "personalEmail", "text"],
+  ["RVSSメールアドレス", "rvssEmail", "text"],
+  ["ふりがな", "kana", "text"],
+  ["LINE表示名", "lineName", "text"],
+  ["メンバーID", "memberId", "text"],
+  ["Slack招待状況", "slackInvite", "text"],
+  ["Slack参加状況", "slackJoined", "text"],
+  ["生年月日", "birthday", "date"],
+  ["備考", "rosterNote", "text"],
+];
+// 名簿は空欄を文字で埋めてある。これらは「入力なし」として扱う。
+const ROSTER_BLANK = /^(未確認|要確認|未集計|未設定|未チェック|未登録|無所属|なし|-|ー)$/;
+function rosterText(v) {
+  const t = String(v == null ? "" : v).trim();
+  return ROSTER_BLANK.test(t) ? "" : t;
+}
+function rosterNum(v) {
+  const n = Number(rosterText(v));
+  return Number.isFinite(n) && n > 0 ? n : "";
+}
+// 日付はシリアル値で返る（46307 = 2026-10-12）。1899-12-30 からの日数。
+function rosterDate(v) {
+  if (typeof v === "number" && v > 20000) {
+    return new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 86400000).toISOString().slice(0, 10);
+  }
+  return toYmd(rosterText(v));
+}
+function rosterBool(v) { return v === true || String(v).toUpperCase() === "TRUE"; }
+function rosterName(n) { return String(n).replace(/[\s　]/g, "").replace(/﨑/g, "崎"); }
+function rosterBookId() { return String(state.rosterBookId || "").trim() || ROSTER_BOOK_ID_DEFAULT; }
+function setRosterBookId() {
+  inputDialog("名簿のスプレッドシートURL（空にすると既定に戻ります）",
+    "https://docs.google.com/spreadsheets/d/" + rosterBookId() + "/edit", v => {
+      const raw = String(v || "").trim();
+      if (!raw) { delete state.rosterBookId; save(); setStatus("✅ 既定の名簿に戻しました", "#2f7d4a"); return; }
+      const m = raw.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
+      const id = m ? m[1] : raw;
+      if (!/^[A-Za-z0-9_-]{20,}$/.test(id)) { setStatus("❌ スプレッドシートのURLを貼ってください", "#b73a4a"); return; }
+      state.rosterBookId = id; save(); setStatus("✅ 名簿を登録しました", "#2f7d4a");
+    });
+}
+
+// 名簿を state に流し込む。名簿が空の項目はアプリの値を消さない。
+// 名簿にしかいない人は足すが、アプリにしかいない人（BSなど）は消さない。
+function applyRoster(rows) {
+  const head = (rows[0] || []).map(h => String(h == null ? "" : h).trim());
+  const col = h => head.indexOf(h);
+  const nameCol = col(ROSTER_NAME_COL);
+  if (nameCol < 0) throw new Error("「" + ROSTER_NAME_COL + "」の列が見つかりません");
+
+  const known = new Map();
+  [].concat(Object.keys(buildMemberMap()), Object.keys(state.memberOverrides || {}),
+    state.deletedMembers || []).forEach(n => { if (!known.has(rosterName(n))) known.set(rosterName(n), n); });
+
+  const out = { seen: 0, added: [], changed: [], leftInRoster: [], paidDiff: [], missingCols: [] };
+  ROSTER_FIELDS.forEach(([h]) => { if (col(h) < 0) out.missingCols.push(h); });
+  if (!state.attrition) state.attrition = { members: {}, risks: [] };
+  if (!state.attrition.members) state.attrition.members = {};
+
+  rows.slice(1).forEach(r => {
+    const raw = String(r[nameCol] == null ? "" : r[nameCol]).trim();
+    if (!raw) return;
+    out.seen++;
+    let name = known.get(rosterName(raw));
+    if (!name) {
+      name = raw.replace(/[\s　]+/g, "");
+      if (!state.members.includes(name)) state.members.push(name);
+      known.set(rosterName(name), name);
+      out.added.push(name);
+    }
+    const prev = state.memberOverrides[name] || {};
+    const next = { ...prev };
+    ROSTER_FIELDS.forEach(([h, key, kind]) => {
+      const c = col(h);
+      if (c < 0) return;
+      const v = kind === "date" ? rosterDate(r[c]) : kind === "num" ? rosterNum(r[c]) : rosterText(r[c]);
+      if (v === "" || v == null) return;
+      if (prev[key] !== v) out.changed.push(name + "：" + h);
+      next[key] = v;
+    });
+    if (col("NDA送付済") >= 0) next.ndaSent = rosterBool(r[col("NDA送付済")]);
+    if (col("NDA締結済") >= 0) next.ndaSigned = rosterBool(r[col("NDA締結済")]);
+
+    const st = col("在籍状況") >= 0 ? rosterText(r[col("在籍状況")]) : "";
+    if (st === "休会中") next.status = "休会中";
+    else if (st === "在籍" && /休会/.test(String(prev.status || ""))) delete next.status;
+    // 退会は名簿で見かけても勝手に名簿から外さない。取り返しがつかないので報告だけ。
+    else if (st === "退会" && !(state.deletedMembers || []).includes(name)) out.leftInRoster.push(name);
+
+    if (col("有償") >= 0 && rosterBool(r[col("有償")]) !== isPaidMember(name)) out.paidDiff.push(name);
+
+    state.memberOverrides[name] = next;
+
+    const j = col("入会日") >= 0 ? rosterDate(r[col("入会日")]) : "";
+    if (j) {
+      const e = state.attrition.members[name] || {};
+      if (toYmd(e.enrolledAt) !== j) state.attrition.members[name] = { ...e, enrolledAt: j };
+    }
+  });
+  return out;
+}
+
+async function importRoster() {
+  if (!roleAtLeast("core")) { setStatus("❌ この操作はコアメン以上です", "#b73a4a"); return; }
+  const btn = document.getElementById("roster-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "取り込み中…"; }
+  try {
+    setStatus("⏳ 名簿を読み込み中…");
+    const data = await callEdgeFn("sheets-read", { spreadsheetId: rosterBookId(), tabs: [ROSTER_TAB] });
+    const rows = ((data.values || {})[ROSTER_TAB]) || [];
+    if (rows.length < 2) throw new Error("「" + ROSTER_TAB + "」タブが読めませんでした");
+    const out = applyRoster(rows);
+    save(); render();
+    rosterResultDialog(out);
+    setStatus("✅ 名簿を取り込みました（" + out.seen + "名）", "#2f7d4a");
+  } catch (e) {
+    setStatus("❌ 取り込めませんでした: " + e.message, "#b73a4a");
+  }
+  const again = document.getElementById("roster-btn");
+  if (again) { again.disabled = false; again.textContent = "名簿から取り込む"; }
+}
+function rosterResultDialog(out) {
+  const list = (title, arr, tone) => arr.length ? `
+    <div style="margin-top:10px">
+      <div style="font-size:12px;color:${tone || "var(--muted)"};margin-bottom:4px">${escapeHtml(title)}（${arr.length}）</div>
+      <div style="font-size:12px;line-height:1.9;max-height:150px;overflow:auto;word-break:break-all">${arr.map(escapeHtml).join("／")}</div>
+    </div>` : "";
+  openModal(`
+    <h3>名簿を取り込みました</h3>
+    <div style="font-size:13px;line-height:1.9">名簿 ${out.seen}名を読み、${out.changed.length}件の項目を入れ替えました。</div>
+    ${list("新しく名簿に加わった人", out.added, "var(--green-text)")}
+    ${list("名簿では退会だが、アプリにはまだ在籍で残っている人", out.leftInRoster, "var(--pink-text)")}
+    ${list("有償枠の扱いが名簿と食い違う人", out.paidDiff, "var(--orange-text)")}
+    ${list("名簿に見つからなかった列", out.missingCols, "var(--pink-text)")}
+    ${list("入れ替えた項目", out.changed)}
+    <div class="actions"><button class="btn primary" onclick="closeModal()">閉じる</button></div>
+  `);
+}
+
 // 入会日。退会状況タブと同じ値（attrition.enrolledAt）を見る。
 function enrolledAtOf(name) {
   return toYmd(((((state.attrition || {}).members) || {})[name] || {}).enrolledAt);
@@ -4532,6 +4701,7 @@ function renderAll() {
         ${allFilterReferral ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllReferralChange('${allFilterReferral}')">絞り込みを解除</span>` : ""}
       </div>` : ""}
     </div>
+    ${showAdmin ? memberDetailChipsHTML() : ""}
     ${cards || '<div class="warn">該当メンバーがいません</div>'}
     ${bsSection}
     ${deletedSection}
@@ -4983,13 +5153,49 @@ function contractRemainingHTML(mi) {
 // 前月稼働時間（Notionの稼働管理表と連携して自動反映される想定。手動編集も可）
 // メアドと入会日。メンバー名簿メアドから取り込んだもので、出すのはコアメン以上だけ。
 // 値が無い行は作らない（「未設定」が並ぶと読みにくいため）。
+// カードに出す情報のまとまり。名簿から取り込んだ項目をここで出し分ける。
+// 全部いちどに出すと1人ぶんが長くなりすぎるので、既定は3つだけ。
+const MEMBER_DETAIL_GROUPS = [
+  { id: "contact", label: "連絡先", rows: (mi) => [
+      ["個人メアド", mi.personalEmail], ["RVSSメアド", mi.rvssEmail]] },
+  { id: "school", label: "学部・学年", rows: (mi) => [
+      ["学部・学科", mi.faculty], ["学年", mi.gradeYear ? mi.gradeYear + "年" : ""]] },
+  { id: "dates", label: "入会日・生年月日", rows: (mi, name) => [
+      ["入会日", ymdSlash(enrolledAtOf(name))], ["生年月日", ymdSlash(toYmd(mi.birthday))]] },
+  { id: "sns", label: "Slack・LINE", rows: (mi) => [
+      ["LINE表示名", mi.lineName], ["Slack", slackLabel(mi)]] },
+  { id: "id", label: "メンバーID・ふりがな", rows: (mi) => [
+      ["メンバーID", mi.memberId], ["ふりがな", mi.kana]] },
+  { id: "note", label: "名簿の備考", rows: (mi) => [["備考", mi.rosterNote]] },
+];
+let allDetailGroups = new Set(["contact", "school", "dates"]);
+function toggleDetailGroup(id) {
+  if (allDetailGroups.has(id)) allDetailGroups.delete(id); else allDetailGroups.add(id);
+  render();
+}
+function ymdSlash(v) { return v ? String(v).replace(/-/g, "/") : ""; }
+// 招待と参加をまとめて1行にする。どちらも空なら行ごと出さない。
+function slackLabel(mi) {
+  const inv = String(mi.slackInvite || "").trim();
+  const join = String(mi.slackJoined || "").trim();
+  if (join && /参加/.test(join)) return join;
+  return [inv, join].filter(Boolean).join(" / ");
+}
+function memberDetailChipsHTML() {
+  return `<div style="margin-bottom:10px;line-height:2">
+    <span style="font-size:12px;color:var(--muted);margin-right:6px">表示する情報:</span>
+    ${MEMBER_DETAIL_GROUPS.map(g => {
+      const on = allDetailGroups.has(g.id);
+      return `<span class="tag" style="font-size:12px;padding:6px 12px;cursor:pointer;background:${on ? "#2a2a2a" : "#fff"};color:${on ? "#fff" : "var(--muted)"};border:1px solid ${on ? "#2a2a2a" : "var(--border)"};${on ? "font-weight:700" : ""}" onclick="toggleDetailGroup('${g.id}')">${escapeHtml(g.label)}</span>`;
+    }).join(" ")}
+  </div>`;
+}
 function memberBasicsHTML(name, mi) {
-  const enrolled = toYmd((((state.attrition || {}).members || {})[name] || {}).enrolledAt);
-  const rows = [
-    ["個人メアド", (mi.personalEmail || "").trim()],
-    ["RVSSメアド", (mi.rvssEmail || "").trim()],
-    ["入会日", enrolled ? enrolled.replace(/-/g, "/") : ""],
-  ].filter(r => r[1]);
+  const rows = MEMBER_DETAIL_GROUPS
+    .filter(g => allDetailGroups.has(g.id))
+    .flatMap(g => g.rows(mi, name))
+    .map(([k, v]) => [k, String(v == null ? "" : v).trim()])
+    .filter(r => r[1]);
   if (rows.length === 0) return "";
   return `
     <div class="section-label">基本情報</div>
@@ -5159,6 +5365,7 @@ const CORE_FNS = [
   "addSubGroup","deleteSubGroup","renameSubGroup","addSubGroupMember","removeSubGroupMember",
   "addSchool","deleteSchool","setSchoolLead","clearSchoolSubTl","addSchoolStudent","removeSchoolStudent",
   "addMember","editMember","saveMemberEdit","deleteMember","restoreMember",
+  "importRoster","setRosterBookId",
   "editSlotMember","saveSlotMember","reorderItem",
   "toggleNdaSigned","toggleOutsourcingSigned",
   "addCustomTab","deleteCustomTab",
