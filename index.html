@@ -4701,7 +4701,7 @@ function renderAll() {
         ${allFilterReferral ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllReferralChange('${allFilterReferral}')">絞り込みを解除</span>` : ""}
       </div>` : ""}
     </div>
-    ${showAdmin ? memberDetailChipsHTML() : ""}
+    ${roleAtLeast("core") ? memberDetailChipsHTML() : ""}
     ${cards || '<div class="warn">該当メンバーがいません</div>'}
     ${bsSection}
     ${deletedSection}
