@@ -1311,7 +1311,6 @@ const BASE_TABS = [
   { id: "community", label: "コミュニティ運営",     minRole: "core" },
   { id: "schools",   label: "スクール受講者",       minRole: "core" },
   { id: "paid",      label: "有償枠",               minRole: "core" },
-  { id: "transition",label: "1on1・移行状況",       minRole: "core" },
   { id: "attrition", label: "退会状況",             minRole: "core" },
   { id: "pay",       label: "報酬",                 minRole: "admin" },
 ];
@@ -1462,9 +1461,7 @@ function renderContent() {
     el.innerHTML = `<div class="grid">${state.schools.map(renderSchool).join("")}</div>`;
     } else if (currentTab === "paid") {
     el.innerHTML = renderPaid();
-  } else if (currentTab === "transition") {
-    tb.innerHTML = `<button class="btn primary" onclick="addTransitionMember()">+ 対象者を追加</button>`;
-    el.innerHTML = renderTransition();
+
   } else if (currentTab === "attrition") {
     tb.innerHTML = `
       <button class="btn primary" onclick="addAttritionMember()">+ 離脱者を記録</button>
@@ -1974,130 +1971,17 @@ function memberStatusLabel(name) {
   return "在籍";
 }
 // ====== 名簿（人事ダッシュボードの「メンバー名簿」タブ）からの取り込み ======
-// 列は増える前提なので、位置ではなく見出し名で引く。見出しが変わったらここだけ直す。
-const ROSTER_BOOK_ID_DEFAULT = "1SrKO3GjNj8Vnt3dCrgQmoNoMToGF2XJp41-ldgSwFSY";
-const ROSTER_TAB = "メンバー名簿";
-const ROSTER_NAME_COL = "氏名（フルネーム）";
-// 見出し → memberOverrides のキー。ここに無い列は取り込まない。
-// 所属PJ・所属部署・有償はアプリ側が正本なので入れない（食い違いは報告だけする）。
-const ROSTER_FIELDS = [
-  ["大学名・学校名", "university", "text"],
-  ["学部・学科", "faculty", "text"],
-  ["学年", "gradeYear", "num"],
-  ["エリア", "area", "text"],
-  ["個人メールアドレス", "personalEmail", "text"],
-  ["RVSSメールアドレス", "rvssEmail", "text"],
-  ["ふりがな", "kana", "text"],
-  ["LINE表示名", "lineName", "text"],
-  ["メンバーID", "memberId", "text"],
-  ["Slack招待状況", "slackInvite", "text"],
-  ["Slack参加状況", "slackJoined", "text"],
-  ["生年月日", "birthday", "date"],
-  ["備考", "rosterNote", "text"],
-];
-// 名簿は空欄を文字で埋めてある。これらは「入力なし」として扱う。
-const ROSTER_BLANK = /^(未確認|要確認|未集計|未設定|未チェック|未登録|無所属|なし|-|ー)$/;
-function rosterText(v) {
-  const t = String(v == null ? "" : v).trim();
-  return ROSTER_BLANK.test(t) ? "" : t;
-}
-function rosterNum(v) {
-  const n = Number(rosterText(v));
-  return Number.isFinite(n) && n > 0 ? n : "";
-}
-// 日付はシリアル値で返る（46307 = 2026-10-12）。1899-12-30 からの日数。
-function rosterDate(v) {
-  if (typeof v === "number" && v > 20000) {
-    return new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 86400000).toISOString().slice(0, 10);
-  }
-  return toYmd(rosterText(v));
-}
-function rosterBool(v) { return v === true || String(v).toUpperCase() === "TRUE"; }
-function rosterName(n) { return String(n).replace(/[\s　]/g, "").replace(/﨑/g, "崎"); }
-function rosterBookId() { return String(state.rosterBookId || "").trim() || ROSTER_BOOK_ID_DEFAULT; }
-function setRosterBookId() {
-  inputDialog("名簿のスプレッドシートURL（空にすると既定に戻ります）",
-    "https://docs.google.com/spreadsheets/d/" + rosterBookId() + "/edit", v => {
-      const raw = String(v || "").trim();
-      if (!raw) { delete state.rosterBookId; save(); setStatus("✅ 既定の名簿に戻しました", "#2f7d4a"); return; }
-      const m = raw.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
-      const id = m ? m[1] : raw;
-      if (!/^[A-Za-z0-9_-]{20,}$/.test(id)) { setStatus("❌ スプレッドシートのURLを貼ってください", "#b73a4a"); return; }
-      state.rosterBookId = id; save(); setStatus("✅ 名簿を登録しました", "#2f7d4a");
-    });
-}
-
-// 名簿を state に流し込む。名簿が空の項目はアプリの値を消さない。
-// 名簿にしかいない人は足すが、アプリにしかいない人（BSなど）は消さない。
-function applyRoster(rows) {
-  const head = (rows[0] || []).map(h => String(h == null ? "" : h).trim());
-  const col = h => head.indexOf(h);
-  const nameCol = col(ROSTER_NAME_COL);
-  if (nameCol < 0) throw new Error("「" + ROSTER_NAME_COL + "」の列が見つかりません");
-
-  const known = new Map();
-  [].concat(Object.keys(buildMemberMap()), Object.keys(state.memberOverrides || {}),
-    state.deletedMembers || []).forEach(n => { if (!known.has(rosterName(n))) known.set(rosterName(n), n); });
-
-  const out = { seen: 0, added: [], changed: [], leftInRoster: [], paidDiff: [], missingCols: [] };
-  ROSTER_FIELDS.forEach(([h]) => { if (col(h) < 0) out.missingCols.push(h); });
-  if (!state.attrition) state.attrition = { members: {}, risks: [] };
-  if (!state.attrition.members) state.attrition.members = {};
-
-  rows.slice(1).forEach(r => {
-    const raw = String(r[nameCol] == null ? "" : r[nameCol]).trim();
-    if (!raw) return;
-    out.seen++;
-    let name = known.get(rosterName(raw));
-    if (!name) {
-      name = raw.replace(/[\s　]+/g, "");
-      if (!state.members.includes(name)) state.members.push(name);
-      known.set(rosterName(name), name);
-      out.added.push(name);
-    }
-    const prev = state.memberOverrides[name] || {};
-    const next = { ...prev };
-    ROSTER_FIELDS.forEach(([h, key, kind]) => {
-      const c = col(h);
-      if (c < 0) return;
-      const v = kind === "date" ? rosterDate(r[c]) : kind === "num" ? rosterNum(r[c]) : rosterText(r[c]);
-      if (v === "" || v == null) return;
-      if (prev[key] !== v) out.changed.push(name + "：" + h);
-      next[key] = v;
-    });
-    if (col("NDA送付済") >= 0) next.ndaSent = rosterBool(r[col("NDA送付済")]);
-    if (col("NDA締結済") >= 0) next.ndaSigned = rosterBool(r[col("NDA締結済")]);
-
-    const st = col("在籍状況") >= 0 ? rosterText(r[col("在籍状況")]) : "";
-    if (st === "休会中") next.status = "休会中";
-    else if (st === "在籍" && /休会/.test(String(prev.status || ""))) delete next.status;
-    // 退会は名簿で見かけても勝手に名簿から外さない。取り返しがつかないので報告だけ。
-    else if (st === "退会" && !(state.deletedMembers || []).includes(name)) out.leftInRoster.push(name);
-
-    if (col("有償") >= 0 && rosterBool(r[col("有償")]) !== isPaidMember(name)) out.paidDiff.push(name);
-
-    state.memberOverrides[name] = next;
-
-    const j = col("入会日") >= 0 ? rosterDate(r[col("入会日")]) : "";
-    if (j) {
-      const e = state.attrition.members[name] || {};
-      if (toYmd(e.enrolledAt) !== j) state.attrition.members[name] = { ...e, enrolledAt: j };
-    }
-  });
-  return out;
-}
-
+// **中身は Edge Function の roster-sync にある。** 同じ処理を2か所に置くと必ずずれるので、
+// 画面のボタンも毎晩のcronも同じ関数を呼ぶ。ここは呼んで結果を見せるだけ。
 async function importRoster() {
   if (!roleAtLeast("core")) { setStatus("❌ この操作はコアメン以上です", "#b73a4a"); return; }
   const btn = document.getElementById("roster-btn");
   if (btn) { btn.disabled = true; btn.textContent = "取り込み中…"; }
   try {
     setStatus("⏳ 名簿を読み込み中…");
-    const data = await callEdgeFn("sheets-read", { spreadsheetId: rosterBookId(), tabs: [ROSTER_TAB] });
-    const rows = ((data.values || {})[ROSTER_TAB]) || [];
-    if (rows.length < 2) throw new Error("「" + ROSTER_TAB + "」タブが読めませんでした");
-    const out = applyRoster(rows);
-    save(); render();
+    const out = await callEdgeFn("roster-sync", {});
+    // roster-sync が直接 org_state を書くので、こちらは読み直す
+    await refreshFromCloud();
     rosterResultDialog(out);
     setStatus("✅ 名簿を取り込みました（" + out.seen + "名）", "#2f7d4a");
   } catch (e) {
@@ -2107,23 +1991,23 @@ async function importRoster() {
   if (again) { again.disabled = false; again.textContent = "名簿から取り込む"; }
 }
 function rosterResultDialog(out) {
-  const list = (title, arr, tone) => arr.length ? `
+  const list = (title, arr, tone) => (arr && arr.length) ? `
     <div style="margin-top:10px">
       <div style="font-size:12px;color:${tone || "var(--muted)"};margin-bottom:4px">${escapeHtml(title)}（${arr.length}）</div>
       <div style="font-size:12px;line-height:1.9;max-height:150px;overflow:auto;word-break:break-all">${arr.map(escapeHtml).join("／")}</div>
     </div>` : "";
   openModal(`
     <h3>名簿を取り込みました</h3>
-    <div style="font-size:13px;line-height:1.9">名簿 ${out.seen}名を読み、${out.changed.length}件の項目を入れ替えました。</div>
+    <div style="font-size:13px;line-height:1.9">名簿 ${out.seen}名を読み、${out.changed}件の項目を入れ替えました。</div>
     ${list("新しく名簿に加わった人", out.added, "var(--green-text)")}
+    ${list("有償枠の入れ替え", out.paid, "var(--orange-text)")}
+    ${list("アサインの入れ替え", out.assign)}
     ${list("名簿では退会だが、アプリにはまだ在籍で残っている人", out.leftInRoster, "var(--pink-text)")}
-    ${list("有償枠の扱いが名簿と食い違う人", out.paidDiff, "var(--orange-text)")}
+    ${list("アプリに無いプロジェクト・部署・グループ", out.unknown, "var(--pink-text)")}
     ${list("名簿に見つからなかった列", out.missingCols, "var(--pink-text)")}
-    ${list("入れ替えた項目", out.changed)}
     <div class="actions"><button class="btn primary" onclick="closeModal()">閉じる</button></div>
   `);
 }
-
 // 入会日。退会状況タブと同じ値（attrition.enrolledAt）を見る。
 function enrolledAtOf(name) {
   return toYmd(((((state.attrition || {}).members) || {})[name] || {}).enrolledAt);
@@ -2134,9 +2018,33 @@ function byEnrolledDesc(a, b) {
   if (da !== db) return (db || "").localeCompare(da || "");
   return a.localeCompare(b, "ja");
 }
-// 出席率の集計期間。CSVを取り込むときに compensation.attendancePeriod へ入れている。
+// 出席率の評価期間は「支給月が入る四半期の、ひとつ前の四半期」。**毎月ずれない。**
+//   7・8・9月分  → 4〜6月
+//   10・11・12月分 → 7〜9月
+//   1・2・3月分  → 10〜12月
+// 11月分だからといって8〜10月にはしない。四半期が変わるまで同じ3ヶ月を使い続ける。
+function attendanceQuarterFor(monthKey) {
+  const [y, m] = String(monthKey || payMonthKey()).split("-").map(Number);
+  const q = Math.floor((m - 1) / 3);          // 0:1-3 1:4-6 2:7-9 3:10-12
+  const prev = q - 1;
+  const year = prev < 0 ? y - 1 : y;
+  const start = (prev < 0 ? 3 : prev) * 3 + 1;
+  return { year, start, end: start + 2, label: `${year}年${start}〜${start + 2}月` };
+}
+// 取り込んだCSVの期間（compensation.attendancePeriod）があればそれを出す。
+// 無ければ四半期の決まりから組み立てる。
 function attendancePeriodLabel() {
-  return ((state.compensation || {}).attendancePeriod) || "";
+  return ((state.compensation || {}).attendancePeriod) || attendanceQuarterFor().label;
+}
+// 取り込んだCSVの期間が、その月の評価期間と合っているか。ずれていたら画面で言う。
+function attendancePeriodMismatch(monthKey) {
+  const got = String(((state.compensation || {}).attendancePeriod) || "").trim();
+  if (!got) return "";
+  const want = attendanceQuarterFor(monthKey);
+  const ym = got.match(/(\d{4})\D+(\d{1,2})/);
+  if (!ym) return "";
+  if (Number(ym[1]) === want.year && Number(ym[2]) === want.start) return "";
+  return `取り込んである出席率は「${got}」ですが、この月の評価期間は ${want.label} です`;
 }
 // 出席率は報酬側（compensation）に入っている。表記ゆれだけ吸収して引く。
 function attendanceRateOf(name) {
@@ -2814,6 +2722,9 @@ function renderCompensation() {
   const warn = [];
   if (missingScore) warn.push(`360°評価が未入力 ${missingScore}名`);
   if (missingAttendance) warn.push(`出席率が未入力 ${missingAttendance}名（各 ${yen(PAY_RULES.attendancePenalty)} として計算しています）`);
+  // 評価期間は四半期で固定。毎月ずらさない（attendanceQuarterFor）。
+  const periodWarn = attendancePeriodMismatch(payMonthKey());
+  if (periodWarn) warn.push(periodWarn);
 
   return `
     <div class="card" style="margin-bottom:16px">
@@ -5193,7 +5104,9 @@ function rosterSyncNoteHTML() {
   const warn = [];
   if ((r.added || []).length) warn.push(`新規 ${r.added.length}名（${r.added.join("・")}）`);
   if ((r.leftInRoster || []).length) warn.push(`名簿では退会 ${r.leftInRoster.length}名（${r.leftInRoster.join("・")}）`);
-  if ((r.paidDiff || []).length) warn.push(`有償枠が名簿と食い違い ${r.paidDiff.length}名（${r.paidDiff.join("・")}）`);
+  if ((r.paid || []).length) warn.push(`有償枠を ${r.paid.length}件入れ替え`);
+  if (r.assign) warn.push(`アサインを ${r.assign}件入れ替え`);
+  if ((r.unknown || []).length) warn.push(r.unknown.join(" ／ "));
   if ((r.missingCols || []).length) warn.push(`名簿に無い列：${r.missingCols.join("・")}`);
   return `<div class="sync-note" style="margin-bottom:10px">
     名簿の自動取り込み ${escapeHtml(when)}：${r.seen}名を読み、${r.changed}件を入れ替えました。
@@ -5384,7 +5297,7 @@ const CORE_FNS = [
   "addSubGroup","deleteSubGroup","renameSubGroup","addSubGroupMember","removeSubGroupMember",
   "addSchool","deleteSchool","setSchoolLead","clearSchoolSubTl","addSchoolStudent","removeSchoolStudent",
   "addMember","editMember","saveMemberEdit","deleteMember","restoreMember",
-  "importRoster","setRosterBookId",
+  "importRoster",
   "editSlotMember","saveSlotMember","reorderItem",
   "toggleNdaSigned","toggleOutsourcingSigned",
   "addCustomTab","deleteCustomTab",
