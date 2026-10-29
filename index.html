@@ -4701,6 +4701,7 @@ function renderAll() {
         ${allFilterReferral ? ` <span class="tag" style="background:#fff;color:#6b6b6b;border:1px solid #e5e3dc;font-size:12px;padding:6px 12px;cursor:pointer" onclick="onAllReferralChange('${allFilterReferral}')">絞り込みを解除</span>` : ""}
       </div>` : ""}
     </div>
+    ${roleAtLeast("core") ? rosterSyncNoteHTML() : ""}
     ${roleAtLeast("core") ? memberDetailChipsHTML() : ""}
     ${cards || '<div class="warn">該当メンバーがいません</div>'}
     ${bsSection}
@@ -5180,6 +5181,24 @@ function slackLabel(mi) {
   const join = String(mi.slackJoined || "").trim();
   if (join && /参加/.test(join)) return join;
   return [inv, join].filter(Boolean).join(" / ");
+}
+// roster-sync（毎日 JST 2:30）が state.rosterSync に書いた結果を一行で出す。
+// 黙って走るので、食い違いが出ていてもここを見ないと分からない。
+function rosterSyncNoteHTML() {
+  const r = state.rosterSync;
+  if (!r || !r.at) return "";
+  const d = new Date(r.at);
+  const p = n => String(n).padStart(2, "0");
+  const when = `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  const warn = [];
+  if ((r.added || []).length) warn.push(`新規 ${r.added.length}名（${r.added.join("・")}）`);
+  if ((r.leftInRoster || []).length) warn.push(`名簿では退会 ${r.leftInRoster.length}名（${r.leftInRoster.join("・")}）`);
+  if ((r.paidDiff || []).length) warn.push(`有償枠が名簿と食い違い ${r.paidDiff.length}名（${r.paidDiff.join("・")}）`);
+  if ((r.missingCols || []).length) warn.push(`名簿に無い列：${r.missingCols.join("・")}`);
+  return `<div class="sync-note" style="margin-bottom:10px">
+    名簿の自動取り込み ${escapeHtml(when)}：${r.seen}名を読み、${r.changed}件を入れ替えました。
+    ${warn.length ? `<br><span style="color:var(--orange-text)">${escapeHtml(warn.join(" ／ "))}</span>` : ""}
+  </div>`;
 }
 function memberDetailChipsHTML() {
   return `<div style="margin-bottom:10px;line-height:2">
