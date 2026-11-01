@@ -113,9 +113,15 @@ cron は日付 `28-31` で仕掛け、日本時間が1日のときだけ実行�
 
 ## 出席率
 
-CSV（`attendance_payroll_YYYY-MM_開始_終了.csv`）を直近3ヶ月ぶんで渡される。
 入れる先は `compensation.members[氏名].attendanceRate`、集計期間は
 `compensation.attendancePeriod`（退会状況タブの注記がこれを出す）。
+
+**2026-11-01 から出どころは土曜定例の出欠そのもの**
+（`土曜定例出席率_20260704-20260926_選択12回.csv.xlsx`／中身はxlsx）。
+氏名／対象回数／個人出席率(%)／出席・遅刻・報告欠席・無断欠席の回数。
+**対象回数は人によって違う**（入会前の回は数えない。72名中22名が12回未満）。
+それ以前の `attendance_payroll_YYYY-MM_開始_終了.csv` と同じ期間でも値が少しずれる。
+2026-07〜09 で入れ替えたときに動いたのは5名だけだった。
 
 メンバー直下の値は「最新の集計」。**締めた月は `byMonth["YYYY-MM"].attendanceRate` に
 焼き付けて固定する。** `attendanceRate` は `PAY_MONTHLY_FIELDS` に入れていないので、
