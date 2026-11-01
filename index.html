@@ -2637,7 +2637,13 @@ function renderCompensation() {
   const unpayable = rows.filter(r => !r.calc.payable);
   const total = payable.reduce((s, r) => s + r.calc.total, 0);
   const missingAttendance = payable.filter(r => typeof r.pi.attendanceRate !== "number").length;
-  const missingScore = payable.filter(r => typeof r.pi.score360 !== "number").length;
+  // 360°評価は四半期ごとに対象者が決まり、その結果が次の四半期の3ヶ月に効く。
+  // 対象者を登録してあるなら、その人たちだけを「未入力」として数える。
+  // 登録が無い月は今までどおり有償枠全員を見る。
+  const scoreTargets = ((state.compensation || {}).scoreTargets) || [];
+  const inTargets = n => scoreTargets.some(t => payMemberKey(t) === payMemberKey(n));
+  const scoreRows = scoreTargets.length ? payable.filter(r => inTargets(r.name)) : payable;
+  const missingScore = scoreRows.filter(r => typeof r.pi.score360 !== "number").length;
 
   const cell = v => `<td>${v}</td>`;
   const row = r => {
@@ -2720,7 +2726,9 @@ function renderCompensation() {
   const ratioPeople = payable.length ? `${pjPeople}：${payable.length - pjPeople}` : "—";
 
   const warn = [];
-  if (missingScore) warn.push(`360°評価が未入力 ${missingScore}名`);
+  if (missingScore) warn.push(scoreTargets.length
+    ? `360°評価の結果がまだ入っていません（${escapeHtml(((state.compensation || {}).scorePeriod) || "")}／対象${scoreTargets.length}名のうち${missingScore}名）`
+    : `360°評価が未入力 ${missingScore}名`);
   if (missingAttendance) warn.push(`出席率が未入力 ${missingAttendance}名（各 ${yen(PAY_RULES.attendancePenalty)} として計算しています）`);
   // 評価期間は四半期で固定。毎月ずらさない（attendanceQuarterFor）。
   const periodWarn = attendancePeriodMismatch(payMonthKey());
