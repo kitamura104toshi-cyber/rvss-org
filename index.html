@@ -2375,10 +2375,21 @@ const PAY_RULES = {
   ],
   attendanceMin: 90,              // %。未満（未入力を含む）で減額
   attendancePenalty: -5000,
-  scoreBands: [                   // 360°評価。上から順に判定
-    { min: 3.5, amount: 75000 },
-    { min: 3.0, amount: 25000 },
-    { min: 2.5, amount: 5000 },
+  // 360°評価のランクと加算額。報酬制度の資料「03 360度評価ランクと報酬テーブル」のまま。
+  // 上から順に判定する。基礎給8万円に足した額が「月収合計」になる。
+  //   SS 4.5〜5.0  +19.5万 → 27.5万
+  //   S+ 4.0〜4.5  +13.5万 → 21.5万
+  //   S  3.5〜4.0   +7.5万 → 15.5万
+  //   A+ 3.0〜3.5   +2.5万 → 10.5万
+  //   A  2.5〜3.0   +0.5万 →  8.5万
+   //   B  2.0〜2.5      ±0 →    8万
+  scoreBands: [
+    { rank: "SS", min: 4.5, amount: 195000 },
+    { rank: "S+", min: 4.0, amount: 135000 },
+    { rank: "S",  min: 3.5, amount: 75000 },
+    { rank: "A+", min: 3.0, amount: 25000 },
+    { rank: "A",  min: 2.5, amount: 5000 },
+    { rank: "B",  min: 0,   amount: 0 },
   ],
   schoolBonus: 5000,
   managerPay: 30000,
@@ -2558,7 +2569,10 @@ function computePay(name) {
   const score = typeof pi.score360 === "number" ? pi.score360 : null;
   if (score !== null) {
     const band = PAY_RULES.scoreBands.find(b => score >= b.min);
-    if (band) lines.push({ label: `360°評価加算（${score.toFixed(2)}）`, amount: band.amount });
+    // Bランク（2.5未満）は加算0なので行そのものを出さない。ランク名は額の根拠として添える。
+    if (band && band.amount) {
+      lines.push({ label: `360°評価加算（${score.toFixed(2)}・${band.rank}）`, amount: band.amount });
+    }
   }
   if (pi.school) lines.push({ label: "スクール受講加算", amount: PAY_RULES.schoolBonus });
   if (pi.isManager) lines.push({ label: "マネージャー報酬", amount: PAY_RULES.managerPay });
