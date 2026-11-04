@@ -3271,7 +3271,17 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
     const billShare = col =>
       `=ROUND(SUMPRODUCT($D$${memberFirst}:$D$${memberLast}` +
       `*${col}$${memberFirst}:${col}$${memberLast}/IF(${den}=0,1,${den})))`;
-    projects.forEach((p, i) => rows.push([p, billShare(colOf(i))]));
+    // 各PJを別々に四捨五入すると、その合計が売上の四捨五入と1円ずれる。
+    // 請求書としては1件ずつ整数円で、足すと請求総額に合うのが正しいので、
+    // 最後の1件だけ「売上の四捨五入−ほかの合計」にして端数を吸わせる。
+    const saleCell = `B${kpiFirst + 3}`;
+    projects.forEach((p, i) => {
+      const isLast = i === projects.length - 1;
+      if (!isLast) { rows.push([p, billShare(colOf(i))]); return; }
+      rows.push([p, projects.length === 1
+        ? `=ROUND(${saleCell})`
+        : `=ROUND(${saleCell})-SUM(B${billFirst}:B${billFirst + projects.length - 2})`]);
+    });
     rows.push(["合計", `=SUM(B${billFirst}:B${billFirst + projects.length - 1})`]);
   }
   return rows;
