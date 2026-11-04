@@ -2393,7 +2393,7 @@ function yen(n) {
 // マネージャー報酬と手動調整は、その月に決めたぶんだけを出す。
 // メンバー単位の欄に置いたままにすると、7月に付いた認定や8月だけの調整が
 // 翌月以降のブックにも毎回出てきてしまう。
-const PAY_MONTHLY_FIELDS = ["isManager", "adjust", "adjustNote", "countAsProject",
+const PAY_MONTHLY_FIELDS = ["isManager", "adjust", "adjustNote", "countAsProject", "excluded",
   "assumedHours", "assumedProjectHours", "assumedProjectHoursTotal"];
 // 報酬の入力値。基本はメンバー単位だが、月によって変わるもの（リファ成立やマネージャー認定）は
 // byMonth["YYYY-MM"] に置いて、その月だけ上書きする。
@@ -2731,6 +2731,8 @@ function renderCompensation() {
     : `360°評価が未入力 ${missingScore}名`);
   if (missingAttendance) warn.push(`出席率が未入力 ${missingAttendance}名（各 ${yen(PAY_RULES.attendancePenalty)} として計算しています）`);
   // 評価期間は四半期で固定。毎月ずらさない（attendanceQuarterFor）。
+  const excluded = payExcludedNames();
+  if (excluded.length) warn.push(`この月の対象外 ${excluded.length}名（${excluded.join("・")}）`);
   const periodWarn = attendancePeriodMismatch(payMonthKey());
   if (periodWarn) warn.push(periodWarn);
 
@@ -3098,11 +3100,22 @@ function payMonthIsAssumed() {
   return Object.values(m).some(v => typeof (((v.byMonth || {})[key] || {}).assumedHours) === "number");
 }
 // 予想の月は有償枠だけを見る。実績の月は全員。
+// byMonth["YYYY-MM"].excluded を立てた人はその月の一覧に出さない。
+// 0円の行として残すと、支給対象なのに0なのか、そもそも対象外なのかが読めなくなる。
+function payExcluded(name, monthKey) {
+  const m = ((state.compensation || {}).members) || {};
+  const e = m[payMemberKey(name)];
+  return !!(((e || {}).byMonth || {})[monthKey || payMonthKey()] || {}).excluded;
+}
 function payEntries() {
-  const all = payAllEntries();
+  const all = payAllEntries().filter(e => !payExcluded(e.name));
   if (!payIsNext() && !payMonthIsAssumed()) return all;
   const paid = paidTierNames();
   return all.filter(e => paid.has(slotNameKey(e.name)));
+}
+// 外した人を黙って消すと気づけないので、人数だけ画面に出す。
+function payExcludedNames() {
+  return payAllEntries().map(e => e.name).filter(n => payExcluded(n));
 }
 
 // 7月分の報酬シートと同じ3タブ構成で書き出す
