@@ -245,6 +245,16 @@ J列「担当部署メンバー（５名以上）」は〇が付いているだ�
 タブ名は月で違う（9月は「按分」、8月は「プロジェクト稼働」）。
 `parsePayAlloc` は「各PJ請求額」という行を探して見つけるので、タブ名には依存しない。
 
+**Notionのタスクと突き合わせて確かめられる。** `notion-pj-audit`（調査用。済んだら消す）が、
+`notion-worklog-sync` と同じ10個のDBから、その月に完了したタスクの実績工数を
+プロジェクト×担当者で集計して返す。
+
+2026-10 で突き合わせた結果：**PJの顔ぶれはほぼ一致**（32名中、食い違いは3名だけ）。
+**時間の絶対値は一致しない。** タスクの実績工数の合計は、アプリの稼働時間よりどの人も小さい
+（瀬尾日々輝で総203.5h に対しNotionのタスク合計106.7h）。アプリ側はAI管理表のロールアップで、
+土曜定例など、タスクDBに載らないものを含むため。**比べるなら比率で見る。**
+PJ比率の開きは中央値2ポイントで、9名が10ポイント以上。どの人もNotionのほうがPJ寄りに出る。
+
 誰に稼働があるかは `memberOverrides[氏名].hoursByMonth["YYYY-MM"].projectHours` で引く。
 ただしこれは月初の取り込み時点のスナップショットで、**取りこぼしがある**
 （溝川楽は2026-08の記録自体が無いが、実際にはNoBorderに39.2h）。
@@ -266,7 +276,15 @@ PJ名の表記はタブによって違う（アプリは「高校」、8月の�
 |---|---|---|
 | 2026-08 | `1xfXvUTtLVikqQbRnV6r85e110NFXUtMITl207GGRVe8` | `1F6h9K-pEHRRAArELMx608BeCk6qcPiO4klyNC4-uJkY` |
 | 2026-09 | `1qrkqPe4cbg75ouBnSk9Hbiz_BfFbp8C05JZyDM0deyw` | `1po5T0--0D0PxUV9MYKL8hbzOehmoFesIiNQsA8ZK0vw` |
-| 2026-10 | （まだ無い） | `1KRgMoVIaoPXG-Jrp6Q7CKLahGIVjKHBdIBOGVu-UWmE` |
+| 2026-10 | `1KRgMoVIaoPXG-Jrp6Q7CKLahGIVjKHBdIBOGVu-UWmE` | （まだ無い） |
+
+**2026-11-05 に10月のブックを「修正前」へ移した。** 中身が全部ひとつ前の予想だったため
+（報酬一覧 2,690,000円／按分と業務内容は「予想（有償枠のみ）」／全メンバーは8月の稼働をもとにした概算／
+10月_獲得コストとメンバー按分も予想）。確定後の正しい数字は 3,110,000円 で、修正版はまだ作っていない。
+
+**新しいブックは `sheets-pay-export` では作れない**（マイドライブに作ろうとして403）。
+共有ドライブ「報酬」の `報酬金額`（`1rYURj99fAMGST8ahGLPdxeXFFE-jmFZ5`）に
+`sheets-new-book` で作ってから、その `spreadsheetId` を `sheets-pay-export` に渡して書き込む。
 
 **9月の修正版はxlsxから変換した時点でIDが変わっている。**
 変換前の `1r8j3Mm8SAve9lDUXJocVPxa93pNXCLn6` はもう使わない（`exportSheets` は差し替え済み）。
