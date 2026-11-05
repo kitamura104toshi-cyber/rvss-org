@@ -3322,7 +3322,10 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
 //   recruit.funnel[月]            採用ファネル（採用管理シートから手で入れる）
 function payRecruit() {
   const r = ((state.compensation || {}).recruit) || {};
-  return { outreachRatios: r.outreachRatios || {}, months: r.months || {}, funnel: r.funnel || {} };
+  return {
+    outreachRatios: r.outreachRatios || {}, monthRatios: r.monthRatios || {},
+    months: r.months || {}, funnel: r.funnel || {},
+  };
 }
 function payRecruitMonth(key) { return payRecruit().months[key || payMonthKey()] || {}; }
 function payMonthShift(key, delta) {
@@ -3332,8 +3335,13 @@ function payMonthShift(key, delta) {
 }
 // 土曜定例 95分×4回。採用広報の仮置き式では、このぶんを組織運営に残す。
 const PAY_ORG_FIXED_HOURS = 6.3;
-function payOutreachRatio(name) {
-  const v = payRecruit().outreachRatios[name];
+// 申告の採用広報比率。**月ごとの申告が先で、無ければ全月に効く値を見る。**
+// 月ごとに持たないと、11月に聞いた割合が10月の確定値まで動かしてしまう。
+function payOutreachRatio(name, key) {
+  const r = payRecruit();
+  const m = r.monthRatios[key || payMonthKey()] || {};
+  if (typeof m[name] === "number") return m[name];
+  const v = r.outreachRatios[name];
   return typeof v === "number" ? v : null;
 }
 // その月の入会者数。退会状況タブと同じ起点（attrition の入会日）で数える。
