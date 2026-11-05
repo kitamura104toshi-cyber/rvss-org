@@ -3355,11 +3355,10 @@ function payOutreachEntries() {
 }
 // 配賦額をアプリ側でも出す。スプシの式と同じ順で計算し、翌月の比較用に記録する。
 function payOutreachAmount(e) {
-  const a = payAllocation(e.name, e.calc.total);
   const declared = payOutreachRatio(e.name);
   let ratio = declared;
   if (ratio == null) {
-    if (a && a.pjTotal > 0) ratio = 0;
+    if (payInAllocation(e)) ratio = 0;   // 按分タブに出る人の採用広報比率は0
     else {
       const h = typeof e.calc.hours === "number" ? e.calc.hours : 0;
       ratio = h > 0 ? Math.max(0, (h - PAY_ORG_FIXED_HOURS) / h) : 0;
