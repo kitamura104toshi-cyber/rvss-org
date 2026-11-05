@@ -3539,7 +3539,11 @@ function payRecruitCostTab(index) {
     const eFirst = at();
     const chg = r => `=IF(N(B${r})=0,"",C${r}/B${r})`;
     const r1 = sheetRow(at());
-    rows.push(["採用人数", typeof prev.headcount === "number" ? prev.headcount : "", `=B${headRow}`, chg(r1)]);
+    // 前月の採用人数は、書き出したときに記録した値を使う。headcount は手入力の上書き欄なので、
+    // そこへ書き戻すと自動集計が止まってしまう。
+    const prevHead = typeof prev.recordedHeadcount === "number" ? prev.recordedHeadcount
+      : typeof prev.headcount === "number" ? prev.headcount : "";
+    rows.push(["採用人数", prevHead, `=B${headRow}`, chg(r1)]);
     const r2 = sheetRow(at());
     rows.push(["採用コストプール", prev.pool, `=B${poolRow}`, chg(r2)]);
     const r3 = sheetRow(at());
@@ -3608,7 +3612,7 @@ function payRecordRecruitMonth() {
   if (!state.compensation.recruit) state.compensation.recruit = {};
   if (!state.compensation.recruit.months) state.compensation.recruit.months = {};
   state.compensation.recruit.months[key] = {
-    ...m, pool, perMember: head ? Math.round(pool / head) : null,
+    ...m, pool, perMember: head ? Math.round(pool / head) : null, recordedHeadcount: head,
     recordedAt: new Date().toISOString(),
   };
 }
