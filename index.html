@@ -3205,6 +3205,15 @@ const PROJECT_BILLING_RATE = 1.5;
 // 按分タブ。1人ずつの按分と請求額、そのあとにプロジェクト別の集計と、
 // プロジェクト／組織運営の比率を置く。請求額と収益は計算式なので、按分を直せば追随する。
 // offset は表の上に置かれる行数（見出し行のぶん）。
+// 按分タブに出す人。PJ稼働が記録されていても「PJではない」と月ごとに決めた人は出さない
+// （byMonth[月].countAsProject === false）。出すと、その人の支払額までプロジェクトへ
+// 乗って売上が立ってしまう。数時間だけ手伝った人がそうなる
+// （2026-10・11 の佐々木晴也 2h／中桐唯那 13h）。
+// **メンバー按分のPJ比率はこのタブを引くので、条件はここだけに置く。**
+function payInAllocation(e) {
+  const a = e.alloc || payAllocation(e.name, e.calc.total);
+  return !!(a && a.pjTotal > 0 && hasProjectWork(e.name));
+}
 function buildPayAllocationRows(_entries, offset, payTotalRow) {
   const above = offset || 0;
   const label = payMonthLabel();
@@ -3213,7 +3222,7 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
   const payTotalRef = payTotalRow ? `='報酬一覧'!B${payTotalRow}` : 0;
   const withPj = payEntries().filter(e => e.calc.payable)
     .map(e => ({ ...e, alloc: payAllocation(e.name, e.calc.total) }))
-    .filter(e => e.alloc && e.alloc.pjTotal > 0);   // 内訳未入力でもPJ稼働があれば載せる
+    .filter(payInAllocation);   // 内訳未入力でもPJ稼働があれば載せる
   const projects = Array.from(new Set(withPj.flatMap(e => e.alloc.rows.map(r => r.name)))).sort();
 
   // プロジェクト列は J から並ぶ。そのあとに内訳の合計を置き、請求額の分母に使う。
@@ -3341,8 +3350,7 @@ function payRecruitHeadcount(key) {
 function payOutreachEntries() {
   return payEntries().filter(e => e.calc.payable).filter(e => {
     if (payOutreachRatio(e.name) != null) return true;
-    const a = payAllocation(e.name, e.calc.total);
-    return !a || !(a.pjTotal > 0);
+    return !payInAllocation(e);   // 按分タブに出ない人＝PJ比率が0になる人
   });
 }
 // 配賦額をアプリ側でも出す。スプシの式と同じ順で計算し、翌月の比較用に記録する。
