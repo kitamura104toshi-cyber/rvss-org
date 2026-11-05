@@ -3301,6 +3301,318 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
   return rows;
 }
 
+// ====== 採用コスト（メンバー按分・獲得コスト） ======
+// 報酬ブックには毎月この2タブも出す。10月に手で作ったものと同じ作りを生成する。
+// タブは書き出しのたびに書き直すので、**人が入れる数字はスプシではなく state 側に持つ。**
+// スプシのセルへ直接書いた前提値は、次の書き出しで消える。
+//   recruit.outreachRatios[氏名]  申告の採用広報比率（式より優先。備考に「申告値」と出る）
+//   recruit.months[月].external   採用の外部支出
+//   recruit.months[月].headcount  採用人数（既定は退会状況と同じ入会日ベースの自動集計）
+//   recruit.months[月].pjReached  PJへ乗った人数
+//   recruit.months[月].pool/perMember  その月の結果。書き出しのたびに記録し、翌月の比較に使う
+//   recruit.funnel[月]            採用ファネル（採用管理シートから手で入れる）
+function payRecruit() {
+  const r = ((state.compensation || {}).recruit) || {};
+  return { outreachRatios: r.outreachRatios || {}, months: r.months || {}, funnel: r.funnel || {} };
+}
+function payRecruitMonth(key) { return payRecruit().months[key || payMonthKey()] || {}; }
+function payMonthShift(key, delta) {
+  const [y, mo] = String(key).split("-").map(Number);
+  const d = new Date(y, mo - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+// 土曜定例 95分×4回。採用広報の仮置き式では、このぶんを組織運営に残す。
+const PAY_ORG_FIXED_HOURS = 6.3;
+function payOutreachRatio(name) {
+  const v = payRecruit().outreachRatios[name];
+  return typeof v === "number" ? v : null;
+}
+// その月の入会者数。退会状況タブと同じ起点（attrition の入会日）で数える。
+function payEnrolledCount(key) {
+  const k = key || payMonthKey();
+  const field = attritionStartField();
+  return attritionRows().filter(r => String(r[field] || "").slice(0, 7) === k).length;
+}
+function payRecruitHeadcount(key) {
+  const m = payRecruitMonth(key);
+  return typeof m.headcount === "number" ? m.headcount : payEnrolledCount(key);
+}
+// 採用広報へ配賦される人。PJ稼働が無い人（＝仮置き式が0にならない人）と、申告値がある人。
+function payOutreachEntries() {
+  return payEntries().filter(e => e.calc.payable).filter(e => {
+    if (payOutreachRatio(e.name) != null) return true;
+    const a = payAllocation(e.name, e.calc.total);
+    return !a || !(a.pjTotal > 0);
+  });
+}
+// 配賦額をアプリ側でも出す。スプシの式と同じ順で計算し、翌月の比較用に記録する。
+function payOutreachAmount(e) {
+  const a = payAllocation(e.name, e.calc.total);
+  const declared = payOutreachRatio(e.name);
+  let ratio = declared;
+  if (ratio == null) {
+    if (a && a.pjTotal > 0) ratio = 0;
+    else {
+      const h = typeof e.calc.hours === "number" ? e.calc.hours : 0;
+      ratio = h > 0 ? Math.max(0, (h - PAY_ORG_FIXED_HOURS) / h) : 0;
+    }
+  }
+  return Math.round((e.calc.total || 0) * ratio);
+}
+
+// 書式は sheets-format に投げる。1始まり・両端込みなので、組み立て側の
+// 0始まり半開区間（r1..r2 / c1..c2）からここで直す。
+function payFormatRule(a) {
+  return { rows: [a.r1 + 1, a.r2], cols: [a.c1 + 1, a.c2], numberFormat: a.format === "percent" ? "pct" : "yen" };
+}
+// 「■ A. …」のような区画見出しを太字にする。
+function paySectionBoldRules(rows) {
+  return rows.map((r, i) => (/^■/.test(String((r || [])[0] || "")) ? { rows: [i + 1, i + 1], cols: [1, 1], bold: true } : null))
+    .filter(Boolean);
+}
+const MEMBER_ALLOC_COLUMNS = [
+  "氏名", "区分", "月額報酬", "PJ比率", "PJ金額", "採用広報比率", "採用広報金額",
+  "その他組織運営比率", "その他金額", "検算", "PJ売上", "PJ粗利",
+  "採用広報(再掲)", "その他(再掲)", "差", "備考",
+];
+// メンバー按分タブ。月額報酬とPJ比率は報酬一覧・按分からINDEX/MATCHで引くので、
+// 報酬側を直せばここも追随する。**氏名は payExportName（English(日本語)）で揃える。**
+// 日本語だけの行を混ぜると MATCH が外れ、#N/A が合計まで波及する。
+function payMemberAllocTab(index) {
+  const entries = payEntries().filter(e => e.calc.payable);
+  const rows = [
+    [`メンバー別 稼働按分表（${paySectionTitle()}）`],
+    ["C列＝報酬一覧の最終金額、D列＝按分タブのPJ稼働÷総稼働。採用広報比率は「PJ関与なら0、" +
+     `それ以外は（総稼働−${PAY_ORG_FIXED_HOURS}h）÷総稼働」の仮置き式。土曜定例${PAY_ORG_FIXED_HOURS}hは組織運営に残している。` +
+     "申告値がある人はその値で上書きしてある（備考に「申告値」と出る）。"],
+    MEMBER_ALLOC_COLUMNS,
+  ];
+  const idx = (sheet, col, row) => `INDEX('${sheet}'!$${col}:$${col},MATCH($A${row},'${sheet}'!$A:$A,0))`;
+  for (const e of entries) {
+    const r = rows.length + 1;
+    const declared = payOutreachRatio(e.name);
+    rows.push([
+      payExportName(e.name),
+      `=IF(D${r}>0,"PJ関与","組織運営")`,
+      `=${idx("報酬一覧", "B", r)}`,
+      `=IFERROR(${idx("按分", "G", r)}/${idx("報酬一覧", "C", r)},0)`,
+      `=ROUND(C${r}*D${r})`,
+      declared != null ? declared
+        : `=IF(D${r}>0,0,IFERROR(MAX(0,(${idx("報酬一覧", "C", r)}-${PAY_ORG_FIXED_HOURS})/${idx("報酬一覧", "C", r)}),0))`,
+      `=ROUND(C${r}*F${r})`,
+      `=1-D${r}-F${r}`,
+      `=C${r}-E${r}-G${r}`,
+      `=IF(ABS(D${r}+F${r}+H${r}-1)<0.001,"OK","要修正")`,
+      `=C${r}*${PROJECT_BILLING_RATE}*D${r}`,
+      `=K${r}-C${r}*D${r}`,
+      `=$C${r}*F${r}`,
+      `=$C${r}*H${r}`,
+      `=L${r}-SUM(M${r}:N${r})`,
+      declared != null ? "申告値" : "",
+    ]);
+  }
+  const first = 4, last = rows.length, totalRow = rows.length + 1;
+  const sum = c => `=SUM(${c}${first}:${c}${last})`;
+  // 合計行の比率は、比率の足し上げではなく「金額÷総額」。比率列をSUMすると
+  // 826%のような読めない数字になる（人数ぶん足されるため）。
+  rows.push([
+    "合計", `${entries.length}名`, sum("C"),
+    `=IFERROR(E${totalRow}/C${totalRow},0)`, sum("E"),
+    `=IFERROR(G${totalRow}/C${totalRow},0)`, sum("G"),
+    `=IFERROR(I${totalRow}/C${totalRow},0)`, sum("I"), "",
+    sum("K"), sum("L"), sum("M"), sum("N"), sum("O"),
+  ]);
+  // 比率の列（D・F・H）は%、金額の列は円。見出し名からの自動判定では
+  // 比率と「PJ売上／PJ粗利／再掲」が拾えないので、列を名指しで指定する。
+  const band = (cols, format) => cols.map(c =>
+    payFormatRule({ r1: 3, r2: totalRow, c1: c, c2: c + 1, format }));
+  return {
+    title: "メンバー按分", index, headerRowIndex: 2, rows,
+    formatRules: [
+      ...band([2, 4, 6, 8, 10, 11, 12, 13, 14], "money"),
+      ...band([3, 5, 7], "percent"),
+      { rows: [3, 3], cols: [1, MEMBER_ALLOC_COLUMNS.length], bold: true, bg: "header" },
+      { rows: [totalRow, totalRow], cols: [1, MEMBER_ALLOC_COLUMNS.length], bold: true, bg: "total" },
+    ],
+  };
+}
+
+// 獲得コストタブ。A〜C は メンバー按分 の合計行と配賦額から式で出す。
+// D（ファネル）・E（前月比）は state に入れた数字を並べるだけ。
+function payRecruitCostTab(index) {
+  const key = payMonthKey();
+  const month = Number(key.split("-")[1]);
+  const label = payMonthLabel();
+  const m = payRecruitMonth(key);
+  const mode = (payIsNext() || payMonthIsAssumed()) ? "予想" : payIsForecast() ? "推定" : "確定";
+  const total = col => `=INDEX('メンバー按分'!$${col}:$${col},MATCH("合計",'メンバー按分'!$A:$A,0))`;
+  const rows = [];
+  const money = [], percent = [];
+  const at = () => rows.length;            // いま push した行の0始まり位置
+  const sheetRow = i => i + 1;
+
+  rows.push([`${label} 採用コスト（${mode}）`]);
+  rows.push([]);
+  rows.push([`■ A. ${month}月の人件費の内訳（メンバー按分 合計行）`]);
+  rows.push(["項目", "金額"]);
+  const aFirst = at();
+  const paid = payEntries().filter(e => e.calc.payable);
+  rows.push([`支払報酬 合計（${paid.length}名）`, total("C")]);
+  rows.push(["　┗ PJ金額", total("E")]);
+  rows.push(["　┗ 採用広報金額", total("G")]);
+  rows.push(["　┗ その他組織運営金額", total("I")]);
+  rows.push([`PJ売上（PJ金額×${PROJECT_BILLING_RATE}）`, total("K")]);
+  rows.push(["PJ粗利（売上−PJ金額）", total("L")]);
+  money.push({ r1: aFirst, r2: at(), c1: 1, c2: 2, format: "money" });
+
+  rows.push([]);
+  rows.push(["■ B. 採用広報に配賦された人件費"]);
+  rows.push(["メンバー", `${month}月報酬`, "採用広報比率", "配賦額"]);
+  const bFirst = at();
+  const outreach = payOutreachEntries();
+  for (const e of outreach) {
+    const r = sheetRow(at());
+    const idx = col => `=INDEX('メンバー按分'!$${col}:$${col},MATCH($A${r},'メンバー按分'!$A:$A,0))`;
+    rows.push([payExportName(e.name), idx("C"), idx("F"), idx("G")]);
+  }
+  const bLast = at();
+  money.push({ r1: bFirst, r2: bLast, c1: 1, c2: 2, format: "money" });
+  percent.push({ r1: bFirst, r2: bLast, c1: 2, c2: 3, format: "percent" });
+  money.push({ r1: bFirst, r2: bLast, c1: 3, c2: 4, format: "money" });
+  const bSumRow = sheetRow(at());
+  rows.push(["採用広報人件費 合計", "", "", `=SUM(D${sheetRow(bFirst)}:D${bLast})`,
+    `=IF(ROUND(D${bSumRow})=ROUND(INDEX('メンバー按分'!$G:$G,MATCH("合計",'メンバー按分'!$A:$A,0))),"按分表と一致","★按分表と不一致")`]);
+  money.push({ r1: bSumRow - 1, r2: bSumRow, c1: 3, c2: 4, format: "money" });
+  const extRow = sheetRow(at());
+  rows.push(["採用の外部支出", typeof m.external === "number" ? m.external : 0, "", "",
+    typeof m.external === "number" ? "" : "実額未確認のため0"]);
+  const poolRow = sheetRow(at());
+  rows.push(["採用コストプール 合計", `=D${bSumRow}+B${extRow}`]);
+  money.push({ r1: extRow - 1, r2: poolRow, c1: 1, c2: 2, format: "money" });
+
+  rows.push([]);
+  rows.push(["■ C. 1人あたりの獲得コスト"]);
+  rows.push(["項目", "値"]);
+  const headRow = sheetRow(at());
+  const head = payRecruitHeadcount(key);
+  rows.push(["採用人数（入会）", head,
+    typeof m.headcount === "number" ? "手で入れた値" : `${label}の入会者（退会状況タブと同じ起点）`]);
+  const reachRateRow = sheetRow(at());
+  rows.push(["PJ到達率", "", ""]);          // 到達数を入れると下の式で埋まる
+  const reachRow = sheetRow(at());
+  rows.push(["PJアサイン到達数", typeof m.pjReached === "number" ? m.pjReached : "",
+    typeof m.pjReached === "number" ? "" : "未計測"]);
+  rows[reachRateRow - 1][1] = `=IF(N(B${headRow})=0,"",IFERROR(B${reachRow}/B${headRow},""))`;
+  percent.push({ r1: reachRateRow - 1, r2: reachRateRow, c1: 1, c2: 2, format: "percent" });
+  const perRow = sheetRow(at());
+  rows.push(["無償枠1人あたり", `=IF(N(B${headRow})=0,0,B${poolRow}/B${headRow})`]);
+  const perPjRow = sheetRow(at());
+  rows.push(["PJ人材1人あたり", `=IF(N(B${reachRow})=0,"",B${poolRow}/B${reachRow})`]);
+  money.push({ r1: perRow - 1, r2: perPjRow, c1: 1, c2: 2, format: "money" });
+
+  // ファネルは採用管理シートの候補者マスターから手で入れる。入っている月だけ出す。
+  const funnel = payRecruit().funnel;
+  const fKeys = Object.keys(funnel).filter(k => k <= key).sort().slice(-6);
+  rows.push([]);
+  rows.push(["■ D. 採用ファネル（採用管理シート 候補者マスター）"]);
+  rows.push(["月", "公式LINE新規", "合説・イベント申込", "面接・面談申込", "面接・面談実施", "即時入会"]);
+  if (!fKeys.length) {
+    rows.push(["未入力", "", "", "", "", ""]);
+  } else {
+    const num = v => (typeof v === "number" ? v : "");
+    for (const k of fKeys) {
+      const v = funnel[k] || {};
+      rows.push([k, num(v.line), num(v.event), num(v.applied), num(v.interviewed), num(v.joined)]);
+    }
+  }
+  rows.push(["即時入会＝合否が合格かつ面接実施日が当月。採用人数（入会）は入会日ベースなので数が違う。" +
+    "公式LINE新規はPM定例の月次表から。"]);
+
+  // 前月との比較。前月を書き出したときに記録した値があるときだけ出す。
+  const prevKey = payMonthShift(key, -1);
+  const prev = payRecruitMonth(prevKey);
+  if (typeof prev.pool === "number") {
+    const prevLabel = `${Number(prevKey.split("-")[1])}月`;
+    rows.push([]);
+    rows.push([`■ E. ${prevLabel}との比較`]);
+    rows.push(["項目", prevLabel, `${month}月`, "変化"]);
+    const eFirst = at();
+    const chg = r => `=IF(N(B${r})=0,"",C${r}/B${r})`;
+    const r1 = sheetRow(at());
+    rows.push(["採用人数", typeof prev.headcount === "number" ? prev.headcount : "", `=B${headRow}`, chg(r1)]);
+    const r2 = sheetRow(at());
+    rows.push(["採用コストプール", prev.pool, `=B${poolRow}`, chg(r2)]);
+    const r3 = sheetRow(at());
+    rows.push(["無償枠1人あたり", typeof prev.perMember === "number" ? prev.perMember : "",
+      `=B${perRow}`, chg(r3)]);
+    money.push({ r1: r2 - 1, r2: r3, c1: 1, c2: 3, format: "money" });
+    percent.push({ r1: eFirst, r2: at(), c1: 3, c2: 4, format: "percent" });
+  }
+
+  rows.push([]);
+  rows.push(["■ F. 未確定の数字"]);
+  rows.push(["採用広報比率", "PJ関与なら0とする仮置き式。PJと採用広報を兼ねる人は申告値を入れる" +
+    "（アプリの recruit.outreachRatios）"]);
+  rows.push(["採用の外部支出", "ツール代・イベント開催費用・スクールツール代・広告費"]);
+  rows.push(["PJ到達率", `${label}の入会者のうちPJへ乗った人数`]);
+  rows.push(["このタブ", "書き出しのたびに作り直す。セルに直接書いた数字は次の書き出しで消えるので、" +
+    "アプリ側（有償枠タブ）で直すこと。"]);
+
+  const subHeaders = [aFirst - 1, bFirst - 1].concat(
+    rows.map((r, i) => (String((r || [])[0] || "") === "月" || String((r || [])[0] || "") === "項目" ? i : -1))
+      .filter(i => i >= 0));
+  return {
+    title: `${month}月_獲得コスト`, index, headerRowIndex: 3, rows,
+    formatRules: [
+      ...[...money, ...percent].map(payFormatRule),
+      ...paySectionBoldRules(rows),
+      ...Array.from(new Set(subHeaders)).map(i => ({ rows: [i + 1, i + 1], cols: [1, 6], bold: true, bg: "subheader" })),
+    ],
+  };
+}
+// 書き出した直後に書式を当てる。値を書き直しても書式は残るので、
+// 行の意味がずれないよう reset で白紙に戻してから当てる。
+// 1タブでも失敗しても書き出し自体は済んでいるので、ここでは落とさず理由だけ返す。
+async function applyPayBookFormats(spreadsheetId, tabs) {
+  const failed = [];
+  for (const t of tabs) {
+    if (!t.formatRules || !t.formatRules.length) continue;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/sheets-format`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          spreadsheetId, tab: t.title,
+          reset: { rows: [1, Math.max(t.rows.length, 1)], cols: [1, 26] },
+          rules: t.formatRules,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    } catch (e) { failed.push(`${t.title}: ${e.message}`); }
+  }
+  return failed;
+}
+// その月の結果を記録しておく。翌月の「■ E. 前月との比較」がこれを読む。
+function payRecordRecruitMonth() {
+  const key = payMonthKey();
+  const m = payRecruitMonth(key);
+  const external = typeof m.external === "number" ? m.external : 0;
+  const pool = payOutreachEntries().reduce((s, e) => s + payOutreachAmount(e), 0) + external;
+  const head = payRecruitHeadcount(key);
+  if (!state.compensation) state.compensation = { members: {} };
+  if (!state.compensation.recruit) state.compensation.recruit = {};
+  if (!state.compensation.recruit.months) state.compensation.recruit.months = {};
+  state.compensation.recruit.months[key] = {
+    ...m, pool, perMember: head ? Math.round(pool / head) : null,
+    recordedAt: new Date().toISOString(),
+  };
+}
+
 // ====== 書き出し ======
 // 1冊のブックに「先月」「今月」「来月以降」の3タブ。各タブの1行目は何の数字かの見出しで、
 // その下がいつもの表。最終金額と合計は計算式なので、書き出したあとスプシ側で直せる。
@@ -3326,11 +3638,14 @@ function payBookTabs() {
     { title: "按分",     index: 1, headerRowIndex: 1,
       rows: [[paySectionTitle()], ...buildPayAllocationRows(null, 1, payTotalRow)] },
     { title: "業務内容", index: 2, headerRowIndex: 1, rows: [[paySectionTitle()], ...buildPayWorkRows()] },
+    // 採用コストは毎月出す。メンバー按分が土台で、獲得コストはそこを参照するだけ。
+    payMemberAllocTab(3),
+    payRecruitCostTab(4),
   ];
   // 来月分は報酬一覧が有償枠だけになるので、全員の顔ぶれも別タブに残す。
   if (payIsNext()) {
     tabs.push({
-      title: "全メンバー", index: 3, headerRowIndex: 1,
+      title: "全メンバー", index: 5, headerRowIndex: 1,
       rows: [
         [`${payMonthLabel()}分 参考（全メンバー・${withPayMode("actual", payMonthLabel)}の稼働実績をもとにした概算）`],
         ...buildPaySheetRows(payAllEntries(), 1),
@@ -3495,6 +3810,7 @@ async function writePayBook() {
   const restore = () => { if (btn) { btn.disabled = false; btn.textContent = "スプシを開く"; } };
   if (btn) { btn.disabled = true; btn.textContent = "書き出し中…"; }
   const existing = payExportBookId();
+  const tabs = payBookTabs();
   setStatus(existing ? "⏳ 書き出し中…" : "⏳ ブックを作成中…");
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/sheets-pay-export`, {
@@ -3509,8 +3825,10 @@ async function writePayBook() {
         bookTitle: `RVSS報酬一覧 ${paySectionTitle()}`,
         shareWith: payExportShareTo().split(/[,、\s]+/).filter(Boolean),
         valueInputOption: "USER_ENTERED", // = で始まるセルを計算式として入れる
-        keepOtherSheets: false,           // 空シートを残さず、1シート目から3タブにする
-        tabs: payBookTabs(),
+        // 新規ブックのときだけ掃除する（空の「シート1」を残さないため）。
+        // 既存ブックでは、ここに出さないタブ（全メンバー・獲得コストの過去月）を消さない。
+        keepOtherSheets: !!existing,
+        tabs,
       }),
     });
     const data = await res.json();
@@ -3519,12 +3837,16 @@ async function writePayBook() {
       if (!state.compensation) state.compensation = { members: {} };
       if (!state.compensation.exportSheets) state.compensation.exportSheets = {};
       state.compensation.exportSheets[payMonthKey()] = data.spreadsheetId;
+      payRecordRecruitMonth();   // 翌月の比較用に、この月のプールと1人あたりを残す
       save();
     }
+    const failed = await applyPayBookFormats(data.spreadsheetId, tabs);
     if (data.url) window.open(data.url, "_blank", "noopener");
     render();
-    const tabs = (data.written || []).map(w => w.title).join("・");
-    setStatus(`✅ 書き出しました（${tabs}）`, "#2f7d4a");
+    const titles = (data.written || []).map(w => w.title).join("・");
+    setStatus(failed.length
+      ? `⚠️ 書き出しました（${titles}）。書式だけ失敗: ${failed.join("／")}`
+      : `✅ 書き出しました（${titles}）`, failed.length ? "#b07d2a" : "#2f7d4a");
   } catch (e) {
     setStatus("❌ 書き出し失敗: " + e.message, "#b73a4a");
   } finally {
