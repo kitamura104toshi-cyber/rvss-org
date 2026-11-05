@@ -324,6 +324,7 @@ PJ名の表記はタブによって違う（アプリは「高校」、8月の�
 | 2026-08 | `1xfXvUTtLVikqQbRnV6r85e110NFXUtMITl207GGRVe8` | `1F6h9K-pEHRRAArELMx608BeCk6qcPiO4klyNC4-uJkY` |
 | 2026-09 | `1qrkqPe4cbg75ouBnSk9Hbiz_BfFbp8C05JZyDM0deyw` | `1po5T0--0D0PxUV9MYKL8hbzOehmoFesIiNQsA8ZK0vw` |
 | 2026-10 | `1KRgMoVIaoPXG-Jrp6Q7CKLahGIVjKHBdIBOGVu-UWmE` | （まだ無い） |
+| 2026-11 | （まだ無い） | `1SgNpLDyZ0Ms5RvY7hWtSVU6CyHhM0BzCVFC6u8F-zjU`（予想） |
 
 **10月のブックは6タブ。** 報酬一覧／按分／業務内容／メンバー按分／10月_獲得コスト／全メンバー。
 `sheets-pay-export` に `keepOtherSheets:true` を渡せば、名前を挙げたタブだけ書き直して残りは残る。
@@ -514,6 +515,16 @@ Vault に `anthropic_api_key` があればタスク名を要約する。無け�
     大学名・学校名／学部・学科／学年／エリア／在籍状況／入会日／NDA送付済／NDA締結済
     Slack招待状況／Slack参加状況／メンバーID／ふりがな／LINE表示名／生年月日
     入会説明会希望日（自動）／備考／土曜定例出席率（自動）
+
+**名簿の列名は変わる。** 2026-11-05 に5本が改名された（大学名・学校名→学校名・所属先／
+学部・学科→学部・学科など／学年→学年・現在の状況／Slack招待状況→Slack招待済／
+Slack参加状況→Slack参加済）。Slackは値も文字から真偽値になった。
+**取り込み前に必ず dryRun して `missingCols` が空か見ること。**
+見つからない列は黙って読み飛ばすので、気づかないとその項目だけ更新が止まる。
+
+**有償枠は同期しない**（2026-11-05〜）。有償枠タブ（`paidGroups`）が正本で、月途中の出入りは
+そちらで決める。名簿との食い違いは `paidDiff` で報告するだけ。
+名簿の「有償」列は参考値で、実態と合っていないことがある。
 
 **規則は `roster-sync`（Edge Function）だけに置いてある。** 画面のボタンもそこを呼ぶだけ。
 同じ処理を2か所に書くと必ずずれるため、アプリ側に取り込みロジックを戻さないこと。
