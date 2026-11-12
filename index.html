@@ -3220,6 +3220,13 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
   // 支払総額は報酬一覧タブの合計を参照する。この按分タブにはプロジェクト関与者しか
   // 並ばないので、ここの小計を支払総額として扱うと損益が実態より小さく出てしまう。
   const payTotalRef = payTotalRow ? `='報酬一覧'!B${payTotalRow}` : 0;
+  // 支払額と総稼働は報酬一覧から引く。手入力のままだと、報酬側を直したときに按分が
+  // 置いていかれる（2026-11-12 の井上貴雅がそれで、360°評価の訂正で支払額が2万円
+  // 下がったのに、按分の支払額は古い105,000のまま残っていた）。
+  // 氏名は payExportName で揃えてあるので MATCH は当たる。当たらなければ #N/A が
+  // 合計まで波及する——黙って古い数字が残るより、そのほうがよい。
+  const payLookup = (row, col) =>
+    `=INDEX('報酬一覧'!$${col}:$${col},MATCH($A${row},'報酬一覧'!$A:$A,0))`;
   const withPj = payEntries().filter(e => e.calc.payable)
     .map(e => ({ ...e, alloc: payAllocation(e.name, e.calc.total) }))
     .filter(payInAllocation);   // 内訳未入力でもPJ稼働があれば載せる
@@ -3239,12 +3246,14 @@ function buildPayAllocationRows(_entries, offset, payTotalRow) {
     const a = e.alloc;
     const hoursByPj = Object.fromEntries(a.rows.map(r => [r.name, r.hours]));
     const r = rows.length + 1 + above;   // 書き出し後の行番号
-    // 按分は式で出す。稼働時間を直せば按分・売上・収益がその場で追随する。
+    // 按分は式で出す。支払額と総稼働は報酬一覧から引き、組織運営稼働は
+    // 総稼働−プロジェクト稼働。手入力なのはプロジェクト稼働とPJ別の内訳だけなので、
+    // 報酬側を直せば按分・売上・収益・請求額までその場で追随する。
     rows.push([
-      payExportName(e.name), e.calc.total,
+      payExportName(e.name), payLookup(r, "B"),
       `=IFERROR(B${r}*G${r}/I${r},0)`,
       `=C${r}*${PROJECT_BILLING_RATE}`, `=D${r}-C${r}`,
-      `=B${r}-C${r}`, a.pjTotal, a.orgHours, a.hours,
+      `=B${r}-C${r}`, a.pjTotal, `=$I${r}-$G${r}`, payLookup(r, "C"),
       ...projects.map(p => hoursByPj[p] || 0),
       ...(projects.length ? [`=SUM(J${r}:${lastPjCol}${r})`] : []),
     ]);
