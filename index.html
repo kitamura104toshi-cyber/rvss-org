@@ -5511,6 +5511,7 @@ function rosterSyncNoteHTML() {
   const warn = [];
   if ((r.added || []).length) warn.push(`新規 ${r.added.length}名（${r.added.join("・")}）`);
   if ((r.leftInRoster || []).length) warn.push(`名簿では退会 ${r.leftInRoster.length}名（${r.leftInRoster.join("・")}）`);
+  if ((r.skippedLeft || []).length) warn.push(`名簿が退会なので取り込まなかった ${r.skippedLeft.length}名（${r.skippedLeft.join("・")}）`);
   if ((r.paid || []).length) warn.push(`有償枠を ${r.paid.length}件入れ替え`);
   if (r.assign) warn.push(`アサインを ${r.assign}件入れ替え`);
   if ((r.unknown || []).length) warn.push(r.unknown.join(" ／ "));
