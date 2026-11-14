@@ -1057,6 +1057,14 @@ const SHEETS_BOT_EMAIL = "sheets-backup-bot@rvss-sheets-backup.iam.gserviceaccou
 // 押すたびに新しいブックを作る。過去に出したものを上書きしないので、
 // 「いつ時点の一覧か」がファイルとして残る。
 // 載せるのはメンバー情報だけ（大学・エリア・アサイン状況）。報酬や契約状況は入れない。
+// 休会開始日。専用の項目として持つ（`status` の「休会中」に書き足すと、
+// 毎日の名簿同期が在籍状況で上書きするので翌朝に消える）。
+// **月までしか分からないことがある**ので、日付に直せない値はそのまま出す。
+function leaveStartLabel(mi) {
+  const v = String(((mi || {}).leaveStartAt) || "").trim();
+  if (!v) return "";
+  return ymdSlash(toYmd(v)) || v;
+}
 // 名簿として書き出す列。書き出しボタンとバックアップのメンバー一覧で同じものを使う。
 // 見出しと値の作り方を1か所にまとめてあるので、足すならここだけ直す。
 const MEMBER_SHEET_COLUMNS = [
@@ -1070,6 +1078,7 @@ const MEMBER_SHEET_COLUMNS = [
   ["学年", (n, mi) => mi.gradeYear ? mi.gradeYear + "年" : ""],
   ["エリア", (n, mi) => mi.area],
   ["入会日", (n) => ymdSlash(enrolledAtOf(n))],
+  ["休会開始日", (n, mi) => leaveStartLabel(mi)],
   ["生年月日", (n, mi) => ymdSlash(toYmd(mi.birthday))],
   ["個人メアド", (n, mi) => mi.personalEmail],
   ["RVSSメアド", (n, mi) => mi.rvssEmail],
@@ -5470,7 +5479,8 @@ const MEMBER_DETAIL_GROUPS = [
   { id: "school", label: "学部・学年", rows: (mi) => [
       ["学部・学科", mi.faculty], ["学年", mi.gradeYear ? mi.gradeYear + "年" : ""]] },
   { id: "dates", label: "入会日・生年月日", rows: (mi, name) => [
-      ["入会日", ymdSlash(enrolledAtOf(name))], ["生年月日", ymdSlash(toYmd(mi.birthday))]] },
+      ["入会日", ymdSlash(enrolledAtOf(name))], ["休会開始日", leaveStartLabel(mi)],
+      ["生年月日", ymdSlash(toYmd(mi.birthday))]] },
   { id: "sns", label: "Slack・LINE", rows: (mi) => [
       ["LINE表示名", mi.lineName], ["Slack", slackLabel(mi)]] },
   { id: "id", label: "メンバーID・ふりがな", rows: (mi) => [
@@ -5571,6 +5581,8 @@ function editMember(name) {
       <option value="休会中"></option>
       <option value="退会準備中"></option>
     </datalist>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">休会開始日（年月日、または年月。休会中のときだけ）</label>
+    <input id="em-leave-start" value="${escapeHtml(current.leaveStartAt||"")}" placeholder="例：2026-10-21／2026-08"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">契約開始日（1年ごとに自動更新）</label>
     <input id="em-contract-start" type="date" value="${escapeHtml(current.contractStartDate||"")}"/>
     <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">継続意思</label>
@@ -5609,6 +5621,7 @@ function saveMemberEdit(oldName) {
   const area = document.getElementById("em-area").value;
   const newName = (document.getElementById("em-name").value||"").trim() || oldName;
   const status = (document.getElementById("em-status").value||"").trim();
+  const leaveStartAt = (document.getElementById("em-leave-start").value||"").trim();
   const contractStartDate = document.getElementById("em-contract-start").value || "";
   const availableUntil = (document.getElementById("em-until").value||"").trim();
   const availableUntilNote = (document.getElementById("em-until-note").value||"").trim();
@@ -5654,7 +5667,7 @@ function saveMemberEdit(oldName) {
   // 編集フォームに無い項目（契約状況・BSバッジ・スキル分類・Notionから取り込んだ稼働時間など）は
   // 元の値を引き継ぐ。ここでオブジェクトを作り直すと、フォームに無い値が編集のたびに消える。
   const kept = state.memberOverrides[newName] || {};
-  const next = { ...kept, university: univ, area: area, status, contractStartDate, availableUntil,
+  const next = { ...kept, university: univ, area: area, status, leaveStartAt, contractStartDate, availableUntil,
     availableUntilNote, tenureIntent, handoverNeeded, lastMonthHours, experience, skills, wantToDo, hobby, admires };
   // 中身が何も残らなければ override ごと消す。
   // 項目名を並べて判定すると、フォームに無いもの（メアド・Slack・LINE など）を数え忘れて、
